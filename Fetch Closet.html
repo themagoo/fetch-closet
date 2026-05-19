@@ -884,13 +884,37 @@
     }
 
     /* ========================= STEP 1 — PHOTOS ========================= */
-    // Build a real garments array by chunking real photos sequentially.
+    // Group helpers — operate on a chronologically-sorted array of picked photos.
+    function chunkByFixed(photos, n) {
+      const out = [];
+      for (let i = 0; i < photos.length; i += n) out.push(photos.slice(i, i + n));
+      return out;
+    }
+
+    function chunkByTimeGap(photos, gapMs) {
+      const out = [];
+      let current = [];
+      for (let i = 0; i < photos.length; i++) {
+        if (current.length === 0) { current.push(photos[i]); continue; }
+        const prev = current[current.length - 1];
+        const dt = (photos[i].lastModified || 0) - (prev.lastModified || 0);
+        if (dt > gapMs) {
+          out.push(current);
+          current = [photos[i]];
+        } else {
+          current.push(photos[i]);
+        }
+      }
+      if (current.length > 0) out.push(current);
+      return out;
+    }
+
+    // Build a real garments array from pre-chunked photo arrays.
     // Suffixes rotate: front, back, label, closeup, callout. First photo of each chunk = front.
-    function buildRealGarments(pickedPhotos, photosPerGarment, folderLabel) {
+    function buildRealGarments(chunks, folderLabel) {
       const out = [];
       const SUF_CYCLE = ["front", "back", "label", "closeup", "callout"];
-      for (let gi = 0; gi < pickedPhotos.length; gi += photosPerGarment) {
-        const slice = pickedPhotos.slice(gi, gi + photosPerGarment);
+      chunks.forEach((slice) => {
         const id = String(out.length + 1).padStart(3, "0");
         const photos = slice.map((p, pi) => {
           const suffix = SUF_CYCLE[Math.min(pi, SUF_CYCLE.length - 1)];
@@ -936,7 +960,7 @@
           palette: null,
           photos,
         });
-      }
+      });
       return out;
     }
 
@@ -949,7 +973,9 @@
       const [thumbs, setThumbs] = useState([]); // [{ name, url|null }]
       const [pickedPhotos, setPickedPhotos] = useState([]); // ALL picked photos with URLs (not capped)
       const [pickedCount, setPickedCount] = useState(0);
+      const [groupMode, setGroupMode] = useState("gap"); // "fixed" | "gap"
       const [photosPerGarment, setPhotosPerGarment] = useState(4);
+      const [gapSeconds, setGapSeconds] = useState(15);
       const fileInputRef = useRef(null);
 
       // After ingestion, detect whether the garments state holds the real picked set
@@ -976,7 +1002,7 @@
       const trayPhotos = thumbs.length > 0
         ? thumbs
         : ingestedReal
-          ? garments.flatMap((g) => g.photos).slice(0, 60).map((p) => ({ name: p.originalName || p.filename, url: p.url }))
+          ? garments.flatMap((g) => g.photos).slice(0, 60).map((p) => ({ name: p.originalName || p.filename, url: p.url, suffix: p.suffix }))
           : null;
 
       function openPicker() {
@@ -996,13 +1022,18 @@
         // Revoke any previous URLs before creating new ones
         pickedPhotos.forEach((p) => p.url && URL.revokeObjectURL(p.url));
 
-        const relPath = imgs[0].webkitRelativePath || imgs[0].name;
+        // Sort by capture timestamp (lastModified) so chunks reflect actual shoot order, not
+        // the OS's directory-enumeration order which is often alphabetical-by-name.
+        const sorted = imgs.slice().sort((a, b) => (a.lastModified || 0) - (b.lastModified || 0));
+
+        const relPath = sorted[0].webkitRelativePath || sorted[0].name;
         const fname = relPath.includes("/") ? relPath.split("/")[0] : "Selected folder";
 
         const RENDERABLE = /\.(jpe?g|png|webp|gif|bmp)$/i;
-        const allPicked = imgs.map((f) => ({
+        const allPicked = sorted.map((f) => ({
           name: f.name,
           url: RENDERABLE.test(f.name) ? URL.createObjectURL(f) : null,
+          lastModified: f.lastModified || 0,
         }));
         // Cap previewed thumbnails for memory; the full set is still used for grouping
         const newThumbs = allPicked.slice(0, 60);
@@ -1017,10 +1048,15 @@
       function runIngest() {
         setPhase("loading");
         setProgress(0);
-        // If a real folder was picked, build real garments to swap in once clustering animates
-        const realGarments = pickedPhotos.length > 0
-          ? buildRealGarments(pickedPhotos, Math.max(1, parseInt(photosPerGarment, 10) || 4), folderName)
-          : null;
+        // If a real folder was picked, chunk the (already chronologically sorted) photos
+        // by the chosen mode, then build real garments to swap in once clustering animates.
+        let realGarments = null;
+        if (pickedPhotos.length > 0) {
+          const chunks = groupMode === "gap"
+            ? chunkByTimeGap(pickedPhotos, Math.max(1, parseInt(gapSeconds, 10) || 15) * 1000)
+            : chunkByFixed(pickedPhotos, Math.max(1, parseInt(photosPerGarment, 10) || 4));
+          realGarments = buildRealGarments(chunks, folderName);
+        }
         const targetCount = realGarments ? realGarments.length : garments.length;
 
         let pct = 0;
@@ -1060,15 +1096,39 @@
                 <button className="btn primary" onClick={openPicker}>{Icon.folder} Browse for folder</button>
               ) : phase === "ready" ? (
                 <>
-                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--ink-3)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-                    Photos per garment
-                    <input
-                      type="number" min="1" max="20" step="1"
-                      value={photosPerGarment}
-                      onChange={(e) => setPhotosPerGarment(e.target.value)}
-                      style={{ width: 56, padding: "4px 6px", border: "1px solid var(--line-2)", borderRadius: 6, fontFamily: "var(--font-mono)", fontSize: 12, textAlign: "center" }}
-                    />
-                  </label>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, padding: 2, border: "1px solid var(--line-2)", borderRadius: 999, background: "var(--surface)" }}>
+                    <button
+                      className={`btn sm ${groupMode === "gap" ? "primary" : "ghost"}`}
+                      onClick={() => setGroupMode("gap")}
+                      title="Detect garment boundaries by time gap between photos (uses each file's modification timestamp)"
+                    >By time gap</button>
+                    <button
+                      className={`btn sm ${groupMode === "fixed" ? "primary" : "ghost"}`}
+                      onClick={() => setGroupMode("fixed")}
+                      title="Chunk photos into fixed-size groups"
+                    >Fixed N</button>
+                  </div>
+                  {groupMode === "gap" ? (
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--ink-3)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                      Gap (sec)
+                      <input
+                        type="number" min="1" max="3600" step="1"
+                        value={gapSeconds}
+                        onChange={(e) => setGapSeconds(e.target.value)}
+                        style={{ width: 64, padding: "4px 6px", border: "1px solid var(--line-2)", borderRadius: 6, fontFamily: "var(--font-mono)", fontSize: 12, textAlign: "center" }}
+                      />
+                    </label>
+                  ) : (
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--ink-3)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                      Photos / garment
+                      <input
+                        type="number" min="1" max="20" step="1"
+                        value={photosPerGarment}
+                        onChange={(e) => setPhotosPerGarment(e.target.value)}
+                        style={{ width: 56, padding: "4px 6px", border: "1px solid var(--line-2)", borderRadius: 6, fontFamily: "var(--font-mono)", fontSize: 12, textAlign: "center" }}
+                      />
+                    </label>
+                  )}
                   <button className="btn ghost" onClick={openPicker}>{Icon.folder} Change folder</button>
                   <button className="btn primary" onClick={runIngest}>{Icon.spark} Ingest & auto-group</button>
                 </>
@@ -1105,7 +1165,7 @@
                     </div>
                     <div className="small">
                       {phase === "idle" && <>click to browse · accepts <span className="kbd">.jpg</span> <span className="kbd">.png</span> <span className="kbd">.heic</span></>}
-                      {phase === "ready" && <>from <strong>{folderName}</strong> · click to pick a different folder</>}
+                      {phase === "ready" && <>from <strong>{folderName}</strong> · {groupMode === "gap" ? `auto-detect garments when shots are >${gapSeconds}s apart` : `chunk every ${photosPerGarment} photos into a garment`} · click to pick a different folder</>}
                       {phase === "loading" && <>Decoding EXIF, building visual fingerprints</>}
                       {phase === "clustering" && <>Grouping by garment, classifying shot types</>}
                       {phase === "done" && <>{totalShown} photos · {garments.length} unique garments</>}
@@ -1154,12 +1214,9 @@
                             <div className="cloth-label-text" style={{ fontSize: 8 }}>HEIC<br/>not previewable</div>
                           )}
                           <div className="ph-label">{(t.name || "").length > 14 ? (t.name || "").slice(0,12) + "…" : (t.name || "")}</div>
-                          {phase === "done" && (() => {
-                            const ppg = Math.max(1, parseInt(photosPerGarment, 10) || 4);
-                            const SUF = ["front","back","label","closeup","callout"];
-                            const suf = SUF[Math.min(i % ppg, SUF.length - 1)];
-                            return <div className={`ph-suffix ${suf === "front" ? "front" : ""}`}>{suf}</div>;
-                          })()}
+                          {phase === "done" && t.suffix && (
+                            <div className={`ph-suffix ${t.suffix === "front" ? "front" : ""}`}>{t.suffix}</div>
+                          )}
                         </div>
                       ))
                     ) : (
