@@ -884,15 +884,76 @@
     }
 
     /* ========================= STEP 1 — PHOTOS ========================= */
-    function StepPhotos({ onContinue, status, setStatus, garments }) {
+    // Build a real garments array by chunking real photos sequentially.
+    // Suffixes rotate: front, back, label, closeup, callout. First photo of each chunk = front.
+    function buildRealGarments(pickedPhotos, photosPerGarment, folderLabel) {
+      const out = [];
+      const SUF_CYCLE = ["front", "back", "label", "closeup", "callout"];
+      for (let gi = 0; gi < pickedPhotos.length; gi += photosPerGarment) {
+        const slice = pickedPhotos.slice(gi, gi + photosPerGarment);
+        const id = String(out.length + 1).padStart(3, "0");
+        const photos = slice.map((p, pi) => {
+          const suffix = SUF_CYCLE[Math.min(pi, SUF_CYCLE.length - 1)];
+          const ext = (p.name.split(".").pop() || "jpg").toLowerCase();
+          return {
+            suffix,
+            bg: "bg-closeup",
+            silhouette: null,
+            palette: null,
+            url: p.url,
+            originalName: p.name,
+            filename: `clothing_upload_${TODAY}_${id}_${suffix}.${ext}`,
+          };
+        });
+        out.push({
+          id,
+          folder: `clothing_upload_${TODAY}_${id}`,
+          _real: true,
+          _sourceFolder: folderLabel,
+          detected: {
+            brand: "",
+            product: `Garment ${id}`,
+            title: `[NEEDS REVIEW] Garment ${id}`,
+            isNWT: false,
+            msrp: null,
+            price: null,
+            stockUrl: "",
+            description: `[NEEDS REVIEW] — fill in brand, product name, and details.\n\nMeasurements (laid flat):\n• __ in\n• __ in\n• __ in\n\nOriginal retail $__.\n\n#hashtag1 #hashtag2 #hashtag3`,
+            department: "Women",
+            category: "",
+            subcategory: "",
+            size: "",
+            condition: "Good",
+            color1: "",
+            color2: "",
+            sku: "",
+          },
+          confidence: {
+            brand: "low", title: "low", price: "low",
+            stockUrl: "low", size: "low", category: "low",
+          },
+          silhouette: null,
+          palette: null,
+          photos,
+        });
+      }
+      return out;
+    }
+
+    function StepPhotos({ onContinue, status, setStatus, garments, setGarments }) {
       const initialPhase = status[0] === "done" ? "done" : "idle";
       const [phase, setPhase] = useState(initialPhase);
       const [progress, setProgress] = useState(initialPhase === "done" ? 100 : 0);
       const [clustered, setClustered] = useState(initialPhase === "done" ? garments.length : 0);
       const [folderName, setFolderName] = useState(null);
       const [thumbs, setThumbs] = useState([]); // [{ name, url|null }]
+      const [pickedPhotos, setPickedPhotos] = useState([]); // ALL picked photos with URLs (not capped)
       const [pickedCount, setPickedCount] = useState(0);
+      const [photosPerGarment, setPhotosPerGarment] = useState(4);
       const fileInputRef = useRef(null);
+
+      // After ingestion, detect whether the garments state holds the real picked set
+      const ingestedReal = garments.length > 0 && garments[0]._real;
 
       // webkitdirectory / directory are non-standard attributes; set imperatively to dodge React's prop-warning path
       useEffect(() => {
@@ -908,8 +969,15 @@
       }, [thumbs]);
 
       const mockPhotos = useMemo(() => garments.flatMap((g) => g.photos.map((p) => ({ ...p, garment: g }))), [garments]);
-      const hasRealFolder = pickedCount > 0;
-      const totalShown = hasRealFolder ? pickedCount : TOTAL_PHOTOS;
+      const realTotalPhotos = ingestedReal ? garments.reduce((n, g) => n + g.photos.length, 0) : 0;
+      const hasRealFolder = pickedCount > 0 || ingestedReal;
+      const totalShown = pickedCount > 0 ? pickedCount : (ingestedReal ? realTotalPhotos : TOTAL_PHOTOS);
+      // For the source-photos tray when revisiting after ingest, fall back to garments' photos
+      const trayPhotos = thumbs.length > 0
+        ? thumbs
+        : ingestedReal
+          ? garments.flatMap((g) => g.photos).slice(0, 60).map((p) => ({ name: p.originalName || p.filename, url: p.url }))
+          : null;
 
       function openPicker() {
         if (fileInputRef.current) fileInputRef.current.click();
@@ -926,18 +994,20 @@
           return;
         }
         // Revoke any previous URLs before creating new ones
-        thumbs.forEach((t) => t.url && URL.revokeObjectURL(t.url));
+        pickedPhotos.forEach((p) => p.url && URL.revokeObjectURL(p.url));
 
         const relPath = imgs[0].webkitRelativePath || imgs[0].name;
         const fname = relPath.includes("/") ? relPath.split("/")[0] : "Selected folder";
 
-        // Cap previewed thumbnails for memory; HEIC/HEIF don't decode in most browsers so we skip the URL
         const RENDERABLE = /\.(jpe?g|png|webp|gif|bmp)$/i;
-        const newThumbs = imgs.slice(0, 60).map((f) => ({
+        const allPicked = imgs.map((f) => ({
           name: f.name,
           url: RENDERABLE.test(f.name) ? URL.createObjectURL(f) : null,
         }));
+        // Cap previewed thumbnails for memory; the full set is still used for grouping
+        const newThumbs = allPicked.slice(0, 60);
 
+        setPickedPhotos(allPicked);
         setThumbs(newThumbs);
         setFolderName(fname);
         setPickedCount(imgs.length);
@@ -947,6 +1017,12 @@
       function runIngest() {
         setPhase("loading");
         setProgress(0);
+        // If a real folder was picked, build real garments to swap in once clustering animates
+        const realGarments = pickedPhotos.length > 0
+          ? buildRealGarments(pickedPhotos, Math.max(1, parseInt(photosPerGarment, 10) || 4), folderName)
+          : null;
+        const targetCount = realGarments ? realGarments.length : garments.length;
+
         let pct = 0;
         const tick = setInterval(() => {
           pct += 7 + Math.random() * 12;
@@ -954,11 +1030,13 @@
             clearInterval(tick);
             setProgress(100);
             setPhase("clustering");
+            // Swap mock garments for real ones now (before the per-garment reveal animation)
+            if (realGarments) setGarments(realGarments);
             let g = 0;
             const tick2 = setInterval(() => {
               g += 1;
               setClustered(g);
-              if (g >= garments.length) {
+              if (g >= targetCount) {
                 clearInterval(tick2);
                 setPhase("done");
                 setStatus((s) => ({ ...s, 0: "done" }));
@@ -982,6 +1060,15 @@
                 <button className="btn primary" onClick={openPicker}>{Icon.folder} Browse for folder</button>
               ) : phase === "ready" ? (
                 <>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--ink-3)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                    Photos per garment
+                    <input
+                      type="number" min="1" max="20" step="1"
+                      value={photosPerGarment}
+                      onChange={(e) => setPhotosPerGarment(e.target.value)}
+                      style={{ width: 56, padding: "4px 6px", border: "1px solid var(--line-2)", borderRadius: 6, fontFamily: "var(--font-mono)", fontSize: 12, textAlign: "center" }}
+                    />
+                  </label>
                   <button className="btn ghost" onClick={openPicker}>{Icon.folder} Change folder</button>
                   <button className="btn primary" onClick={runIngest}>{Icon.spark} Ingest & auto-group</button>
                 </>
@@ -1050,25 +1137,27 @@
                 <div className="card" style={{ padding: 18 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                     <h3 className="section-title" style={{ fontSize: 18 }}>Source photos</h3>
-                    <span className="pill dot">{hasRealFolder ? `${pickedCount} files` : `${TOTAL_PHOTOS} sample files`}</span>
+                    <span className="pill dot">{trayPhotos ? `${totalShown} files` : `${TOTAL_PHOTOS} sample files`}</span>
                   </div>
                   <p className="section-sub" style={{ marginBottom: 12 }}>
-                    {hasRealFolder
-                      ? <>Real photos from <strong>{folderName}</strong>{thumbs.length < pickedCount && <> · preview limited to first {thumbs.length}</>}.</>
+                    {trayPhotos
+                      ? <>Real photos from <strong>{folderName || "your folder"}</strong>{trayPhotos.length < totalShown && <> · preview limited to first {trayPhotos.length}</>}.</>
                       : "Sample tiles — pick a folder above to see your own photos here."}
                   </p>
                   <div className="photo-tray">
-                    {hasRealFolder ? (
-                      thumbs.map((t, i) => (
+                    {trayPhotos ? (
+                      trayPhotos.map((t, i) => (
                         <div key={i} className="photo-tile fade-in" style={{ background: t.url ? "#000" : "var(--bg-2)" }}>
                           {t.url ? (
-                            <img src={t.url} alt={t.name} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                            <img src={t.url} alt={t.name || ""} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
                           ) : (
                             <div className="cloth-label-text" style={{ fontSize: 8 }}>HEIC<br/>not previewable</div>
                           )}
-                          <div className="ph-label">{t.name.length > 14 ? t.name.slice(0,12) + "…" : t.name}</div>
+                          <div className="ph-label">{(t.name || "").length > 14 ? (t.name || "").slice(0,12) + "…" : (t.name || "")}</div>
                           {phase === "done" && (() => {
-                            const suf = ["front","back","label","closeup","callout"][i % 5];
+                            const ppg = Math.max(1, parseInt(photosPerGarment, 10) || 4);
+                            const SUF = ["front","back","label","closeup","callout"];
+                            const suf = SUF[Math.min(i % ppg, SUF.length - 1)];
                             return <div className={`ph-suffix ${suf === "front" ? "front" : ""}`}>{suf}</div>;
                           })()}
                         </div>
@@ -1150,9 +1239,15 @@
                   <div className="group-photos">
                     {g.photos.map((p, i) => (
                       <div key={i} className={`gp-tile ${p.bg}`} style={p.palette ? { "--c1": p.palette.c1, "--c2": p.palette.c2 } : undefined} onClick={() => setFocusPhoto({ garment: g, photo: p, idx: i })}>
-                        <div className="cloth">{p.silhouette ? SILHOUETTES[p.silhouette] : (g.silhouette && (p.suffix === "front" || p.suffix === "back") ? SILHOUETTES[g.silhouette] : null)}</div>
-                        {p.labelText && <div className="cloth-label-text">{p.labelText.split("\n").map((l, ix) => <div key={ix}>{l}</div>)}</div>}
-                        {p.tag && <div className="cloth-tag">{p.tag}</div>}
+                        {p.url ? (
+                          <img src={p.url} alt={p.filename} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                        ) : (
+                          <>
+                            <div className="cloth">{p.silhouette ? SILHOUETTES[p.silhouette] : (g.silhouette && (p.suffix === "front" || p.suffix === "back") ? SILHOUETTES[g.silhouette] : null)}</div>
+                            {p.labelText && <div className="cloth-label-text">{p.labelText.split("\n").map((l, ix) => <div key={ix}>{l}</div>)}</div>}
+                            {p.tag && <div className="cloth-tag">{p.tag}</div>}
+                          </>
+                        )}
                         <div className="gp-suffix-tabs">
                           {SUFFIXES.map((s) => (
                             <button
@@ -1183,9 +1278,15 @@
                 </div>
                 <div className="modal-body">
                   <div className={`gp-tile ${focusPhoto.photo.bg}`} style={{ aspectRatio: "3/4", position: "relative", borderRadius: 10, ...(focusPhoto.photo.palette ? { "--c1": focusPhoto.photo.palette.c1, "--c2": focusPhoto.photo.palette.c2 } : {}) }}>
-                    <div className="cloth">{focusPhoto.photo.silhouette ? SILHOUETTES[focusPhoto.photo.silhouette] : (focusPhoto.garment.silhouette && (focusPhoto.photo.suffix === "front" || focusPhoto.photo.suffix === "back") ? SILHOUETTES[focusPhoto.garment.silhouette] : null)}</div>
-                    {focusPhoto.photo.labelText && <div className="cloth-label-text">{focusPhoto.photo.labelText.split("\n").map((l, ix) => <div key={ix}>{l}</div>)}</div>}
-                    {focusPhoto.photo.tag && <div className="cloth-tag">{focusPhoto.photo.tag}</div>}
+                    {focusPhoto.photo.url ? (
+                      <img src={focusPhoto.photo.url} alt={focusPhoto.photo.filename} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", borderRadius: 10 }} />
+                    ) : (
+                      <>
+                        <div className="cloth">{focusPhoto.photo.silhouette ? SILHOUETTES[focusPhoto.photo.silhouette] : (focusPhoto.garment.silhouette && (focusPhoto.photo.suffix === "front" || focusPhoto.photo.suffix === "back") ? SILHOUETTES[focusPhoto.garment.silhouette] : null)}</div>
+                        {focusPhoto.photo.labelText && <div className="cloth-label-text">{focusPhoto.photo.labelText.split("\n").map((l, ix) => <div key={ix}>{l}</div>)}</div>}
+                        {focusPhoto.photo.tag && <div className="cloth-tag">{focusPhoto.photo.tag}</div>}
+                      </>
+                    )}
                   </div>
                   <div style={{ marginTop: 16 }}>
                     <label style={{ fontSize: 11, color: "var(--ink-3)", letterSpacing: "0.08em", textTransform: "uppercase" }}>Shot type</label>
@@ -1276,12 +1377,16 @@
                       onClick={() => setActiveId(g.id)}
                     >
                       <div className={`research-thumb ${front.bg}`} style={front.palette ? { "--c1": front.palette.c1, "--c2": front.palette.c2 } : undefined}>
-                        <div className="cloth" style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center" }}>
-                          {g.silhouette && <div style={{ width: "70%", height: "70%" }}>{SILHOUETTES[g.silhouette]}</div>}
-                        </div>
+                        {front.url ? (
+                          <img src={front.url} alt="" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                        ) : (
+                          <div className="cloth" style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center" }}>
+                            {g.silhouette && <div style={{ width: "70%", height: "70%" }}>{SILHOUETTES[g.silhouette]}</div>}
+                          </div>
+                        )}
                       </div>
                       <div style={{ minWidth: 0 }}>
-                        <div className="research-row-title">{g.detected.brand} {g.detected.product}</div>
+                        <div className="research-row-title">{(g.detected.brand || g.detected.product) ? `${g.detected.brand} ${g.detected.product}`.trim() : `[Garment ${g.id}]`}</div>
                         <div className="research-row-meta">
                           <span>{g.detected.sku}</span>
                           <span>·</span>
@@ -1300,14 +1405,24 @@
                   <div>
                     <div className={`research-hero ${heroPhoto.bg}`}
                       style={heroPhoto.palette ? { "--c1": heroPhoto.palette.c1, "--c2": heroPhoto.palette.c2 } : undefined}>
-                      <div className="cloth">{SILHOUETTES[active.silhouette]}</div>
+                      {heroPhoto.url ? (
+                        <img src={heroPhoto.url} alt="" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                      ) : (
+                        active.silhouette && <div className="cloth">{SILHOUETTES[active.silhouette]}</div>
+                      )}
                       {active.detected.isNWT && <div className="cloth-tag" style={{ top: "8%", right: "10%" }}>NWT ${active.detected.msrp}</div>}
                     </div>
                     <div className="research-hero-strip">
                       {active.photos.slice(0, 5).map((p, i) => (
                         <div key={i} className={`gp-tile ${p.bg}`} style={p.palette ? { "--c1": p.palette.c1, "--c2": p.palette.c2 } : undefined}>
-                          <div className="cloth">{p.silhouette ? SILHOUETTES[p.silhouette] : (active.silhouette && (p.suffix === "front" || p.suffix === "back") ? SILHOUETTES[active.silhouette] : null)}</div>
-                          {p.labelText && <div className="cloth-label-text" style={{ fontSize: 6 }}>{p.labelText.split("\n").map((l, ix) => <div key={ix}>{l}</div>)}</div>}
+                          {p.url ? (
+                            <img src={p.url} alt="" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                          ) : (
+                            <>
+                              <div className="cloth">{p.silhouette ? SILHOUETTES[p.silhouette] : (active.silhouette && (p.suffix === "front" || p.suffix === "back") ? SILHOUETTES[active.silhouette] : null)}</div>
+                              {p.labelText && <div className="cloth-label-text" style={{ fontSize: 6 }}>{p.labelText.split("\n").map((l, ix) => <div key={ix}>{l}</div>)}</div>}
+                            </>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -1319,7 +1434,7 @@
                       <span className="pill dot">{Icon.folder} {active.folder}</span>
                       {active.detected.isNWT && <span className="pill accent">NWT</span>}
                     </div>
-                    <h2 className="section-title" style={{ fontSize: 28, marginTop: 8 }}>{active.detected.brand}</h2>
+                    <h2 className="section-title" style={{ fontSize: 28, marginTop: 8 }}>{active.detected.brand || <span style={{ color: "var(--ink-3)", fontStyle: "italic" }}>Brand needs review</span>}</h2>
                     <div style={{ color: "var(--ink-2)", fontSize: 16 }}>{active.detected.product}</div>
 
                     <div style={{ display: "flex", gap: 18, marginTop: 16, alignItems: "baseline" }}>
@@ -1640,7 +1755,7 @@
         <div className="app mood-vault density-workhorse photo-silhouette">
           <Sidebar step={step} setStep={setStep} status={status} garments={garments} />
           <main className="canvas">
-            {step === 0 && <StepPhotos onContinue={() => go(1)} status={status} setStatus={setStatus} garments={garments} />}
+            {step === 0 && <StepPhotos onContinue={() => go(1)} status={status} setStatus={setStatus} garments={garments} setGarments={setGarments} />}
             {step === 1 && <StepGroups onContinue={() => go(2)} onBack={() => go(0)} status={status} setStatus={setStatus} garments={garments} setGarments={setGarments} />}
             {step === 2 && <StepResearch onContinue={() => go(3)} onBack={() => go(1)} status={status} setStatus={setStatus} garments={garments} setGarments={setGarments} />}
             {step === 3 && <StepExport onBack={() => go(2)} status={status} setStatus={setStatus} garments={garments} />}
