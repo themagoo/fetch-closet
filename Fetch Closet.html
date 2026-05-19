@@ -884,6 +884,48 @@
     }
 
     /* ========================= STEP 1 — PHOTOS ========================= */
+    // Compute an average-color signature for one image. Resolves with
+    // { r, g, b, ok } — ok=false when the image can't be decoded (HEIC, etc.)
+    function computeColorSignature(url) {
+      return new Promise((resolve) => {
+        if (!url) { resolve({ ok: false }); return; }
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        const cleanup = () => { img.onload = null; img.onerror = null; };
+        img.onload = () => {
+          try {
+            const W = 32, H = 32;
+            const canvas = document.createElement("canvas");
+            canvas.width = W; canvas.height = H;
+            const ctx = canvas.getContext("2d");
+            ctx.drawImage(img, 0, 0, W, H);
+            const data = ctx.getImageData(0, 0, W, H).data;
+            let r = 0, g = 0, b = 0, n = 0;
+            for (let i = 0; i < data.length; i += 4) { r += data[i]; g += data[i+1]; b += data[i+2]; n++; }
+            cleanup();
+            resolve({ r: r/n, g: g/n, b: b/n, ok: true });
+          } catch (e) {
+            cleanup();
+            resolve({ ok: false });
+          }
+        };
+        img.onerror = () => { cleanup(); resolve({ ok: false }); };
+        img.src = url;
+      });
+    }
+
+    // Sequentially enrich each picked photo with a color signature.
+    // Sequential (not parallel) so we can report progress and avoid memory spikes on big folders.
+    async function enrichWithSignatures(photos, onProgress) {
+      const out = [];
+      for (let i = 0; i < photos.length; i++) {
+        const sig = await computeColorSignature(photos[i].url);
+        out.push({ ...photos[i], sig });
+        if (onProgress) onProgress(i + 1, photos.length);
+      }
+      return out;
+    }
+
     // Group helpers — operate on a chronologically-sorted array of picked photos.
     function chunkByFixed(photos, n) {
       const out = [];
@@ -904,6 +946,37 @@
         } else {
           current.push(photos[i]);
         }
+      }
+      if (current.length > 0) out.push(current);
+      return out;
+    }
+
+    // Combined: split when (a) color jump is large, or (b) color jump is moderate AND time gap is large.
+    // Falls back to time-only when either side lacks a usable color signature (e.g. HEIC).
+    function chunkByVisualAndGap(photos, opts) {
+      const { gapMs, colorThreshold } = opts;
+      const out = [];
+      let current = [];
+      for (let i = 0; i < photos.length; i++) {
+        const p = photos[i];
+        if (current.length === 0) { current.push(p); continue; }
+        const prev = current[current.length - 1];
+        const timeGap = (p.lastModified || 0) - (prev.lastModified || 0);
+
+        let split = false;
+        if (p.sig && p.sig.ok && prev.sig && prev.sig.ok) {
+          const dr = p.sig.r - prev.sig.r;
+          const dg = p.sig.g - prev.sig.g;
+          const db = p.sig.b - prev.sig.b;
+          const colorDist = Math.sqrt(dr*dr + dg*dg + db*db);
+          // Decisive color jump → new garment. Moderate jump + big time gap → also new garment.
+          split = colorDist > colorThreshold || (colorDist > colorThreshold * 0.5 && timeGap > gapMs);
+        } else {
+          split = timeGap > gapMs;
+        }
+
+        if (split) { out.push(current); current = [p]; }
+        else { current.push(p); }
       }
       if (current.length > 0) out.push(current);
       return out;
@@ -973,9 +1046,11 @@
       const [thumbs, setThumbs] = useState([]); // [{ name, url|null }]
       const [pickedPhotos, setPickedPhotos] = useState([]); // ALL picked photos with URLs (not capped)
       const [pickedCount, setPickedCount] = useState(0);
-      const [groupMode, setGroupMode] = useState("gap"); // "fixed" | "gap"
+      const [groupMode, setGroupMode] = useState("visual"); // "visual" | "gap" | "fixed"
       const [photosPerGarment, setPhotosPerGarment] = useState(4);
-      const [gapSeconds, setGapSeconds] = useState(15);
+      const [gapSeconds, setGapSeconds] = useState(30);
+      const [colorThreshold, setColorThreshold] = useState(50);
+      const [sigStatus, setSigStatus] = useState(null); // { done, total } during analysis, null otherwise
       const fileInputRef = useRef(null);
 
       // After ingestion, detect whether the garments state holds the real picked set
@@ -1045,43 +1120,69 @@
         setPhase("ready");
       }
 
-      function runIngest() {
+      async function runIngest() {
         setPhase("loading");
         setProgress(0);
-        // If a real folder was picked, chunk the (already chronologically sorted) photos
-        // by the chosen mode, then build real garments to swap in once clustering animates.
+
         let realGarments = null;
         if (pickedPhotos.length > 0) {
-          const chunks = groupMode === "gap"
-            ? chunkByTimeGap(pickedPhotos, Math.max(1, parseInt(gapSeconds, 10) || 15) * 1000)
-            : chunkByFixed(pickedPhotos, Math.max(1, parseInt(photosPerGarment, 10) || 4));
-          realGarments = buildRealGarments(chunks, folderName);
-        }
-        const targetCount = realGarments ? realGarments.length : garments.length;
-
-        let pct = 0;
-        const tick = setInterval(() => {
-          pct += 7 + Math.random() * 12;
-          if (pct >= 100) {
-            clearInterval(tick);
+          let chunks;
+          if (groupMode === "visual") {
+            // Compute color signatures with real progress feedback, then chunk by combined signal
+            setSigStatus({ done: 0, total: pickedPhotos.length });
+            const enriched = await enrichWithSignatures(pickedPhotos, (done, total) => {
+              setSigStatus({ done, total });
+              setProgress((done / total) * 100);
+            });
+            setSigStatus(null);
+            chunks = chunkByVisualAndGap(enriched, {
+              gapMs: Math.max(1, parseInt(gapSeconds, 10) || 30) * 1000,
+              colorThreshold: Math.max(1, parseFloat(colorThreshold) || 50),
+            });
+            realGarments = buildRealGarments(chunks, folderName);
             setProgress(100);
             setPhase("clustering");
-            // Swap mock garments for real ones now (before the per-garment reveal animation)
-            if (realGarments) setGarments(realGarments);
-            let g = 0;
-            const tick2 = setInterval(() => {
-              g += 1;
-              setClustered(g);
-              if (g >= targetCount) {
-                clearInterval(tick2);
-                setPhase("done");
-                setStatus((s) => ({ ...s, 0: "done" }));
-              }
-            }, 320);
           } else {
-            setProgress(pct);
+            chunks = groupMode === "gap"
+              ? chunkByTimeGap(pickedPhotos, Math.max(1, parseInt(gapSeconds, 10) || 15) * 1000)
+              : chunkByFixed(pickedPhotos, Math.max(1, parseInt(photosPerGarment, 10) || 4));
+            realGarments = buildRealGarments(chunks, folderName);
+            // Fall back to the original cosmetic loading animation when no per-photo analysis is needed
+            await new Promise((resolve) => {
+              let pct = 0;
+              const tick = setInterval(() => {
+                pct += 7 + Math.random() * 12;
+                if (pct >= 100) { clearInterval(tick); setProgress(100); setPhase("clustering"); resolve(); }
+                else setProgress(pct);
+              }, 120);
+            });
           }
-        }, 120);
+        } else {
+          // No real folder — run the cosmetic loading animation against mock data
+          await new Promise((resolve) => {
+            let pct = 0;
+            const tick = setInterval(() => {
+              pct += 7 + Math.random() * 12;
+              if (pct >= 100) { clearInterval(tick); setProgress(100); setPhase("clustering"); resolve(); }
+              else setProgress(pct);
+            }, 120);
+          });
+        }
+
+        if (realGarments) setGarments(realGarments);
+        const targetCount = realGarments ? realGarments.length : garments.length;
+
+        // Per-garment reveal animation
+        let g = 0;
+        const tick2 = setInterval(() => {
+          g += 1;
+          setClustered(g);
+          if (g >= targetCount) {
+            clearInterval(tick2);
+            setPhase("done");
+            setStatus((s) => ({ ...s, 0: "done" }));
+          }
+        }, 220);
       }
 
       return (
@@ -1098,17 +1199,45 @@
                 <>
                   <div style={{ display: "flex", alignItems: "center", gap: 6, padding: 2, border: "1px solid var(--line-2)", borderRadius: 999, background: "var(--surface)" }}>
                     <button
+                      className={`btn sm ${groupMode === "visual" ? "primary" : "ghost"}`}
+                      onClick={() => setGroupMode("visual")}
+                      title="Detect garment boundaries by combining visual color similarity with time-gap fallback"
+                    >Visual + time</button>
+                    <button
                       className={`btn sm ${groupMode === "gap" ? "primary" : "ghost"}`}
                       onClick={() => setGroupMode("gap")}
-                      title="Detect garment boundaries by time gap between photos (uses each file's modification timestamp)"
-                    >By time gap</button>
+                      title="Detect garment boundaries by time gap between photos"
+                    >Time gap</button>
                     <button
                       className={`btn sm ${groupMode === "fixed" ? "primary" : "ghost"}`}
                       onClick={() => setGroupMode("fixed")}
                       title="Chunk photos into fixed-size groups"
                     >Fixed N</button>
                   </div>
-                  {groupMode === "gap" ? (
+                  {groupMode === "visual" && (
+                    <>
+                      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--ink-3)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                        Color threshold
+                        <input
+                          type="number" min="10" max="200" step="5"
+                          value={colorThreshold}
+                          onChange={(e) => setColorThreshold(e.target.value)}
+                          title="Lower = more sensitive (more groups). 30–60 is a good range."
+                          style={{ width: 64, padding: "4px 6px", border: "1px solid var(--line-2)", borderRadius: 6, fontFamily: "var(--font-mono)", fontSize: 12, textAlign: "center" }}
+                        />
+                      </label>
+                      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--ink-3)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                        Gap (sec)
+                        <input
+                          type="number" min="1" max="3600" step="1"
+                          value={gapSeconds}
+                          onChange={(e) => setGapSeconds(e.target.value)}
+                          style={{ width: 64, padding: "4px 6px", border: "1px solid var(--line-2)", borderRadius: 6, fontFamily: "var(--font-mono)", fontSize: 12, textAlign: "center" }}
+                        />
+                      </label>
+                    </>
+                  )}
+                  {groupMode === "gap" && (
                     <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--ink-3)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
                       Gap (sec)
                       <input
@@ -1118,7 +1247,8 @@
                         style={{ width: 64, padding: "4px 6px", border: "1px solid var(--line-2)", borderRadius: 6, fontFamily: "var(--font-mono)", fontSize: 12, textAlign: "center" }}
                       />
                     </label>
-                  ) : (
+                  )}
+                  {groupMode === "fixed" && (
                     <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--ink-3)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
                       Photos / garment
                       <input
@@ -1165,8 +1295,14 @@
                     </div>
                     <div className="small">
                       {phase === "idle" && <>click to browse · accepts <span className="kbd">.jpg</span> <span className="kbd">.png</span> <span className="kbd">.heic</span></>}
-                      {phase === "ready" && <>from <strong>{folderName}</strong> · {groupMode === "gap" ? `auto-detect garments when shots are >${gapSeconds}s apart` : `chunk every ${photosPerGarment} photos into a garment`} · click to pick a different folder</>}
-                      {phase === "loading" && <>Decoding EXIF, building visual fingerprints</>}
+                      {phase === "ready" && <>from <strong>{folderName}</strong> · {
+                        groupMode === "visual" ? `auto-detect garments by color similarity (threshold ${colorThreshold}) + ${gapSeconds}s time gap`
+                          : groupMode === "gap" ? `auto-detect garments when shots are >${gapSeconds}s apart`
+                          : `chunk every ${photosPerGarment} photos into a garment`
+                      } · click to pick a different folder</>}
+                      {phase === "loading" && (
+                        sigStatus ? <>Analyzing color signatures · {sigStatus.done} / {sigStatus.total}</> : <>Decoding EXIF, building visual fingerprints</>
+                      )}
                       {phase === "clustering" && <>Grouping by garment, classifying shot types</>}
                       {phase === "done" && <>{totalShown} photos · {garments.length} unique garments</>}
                     </div>
