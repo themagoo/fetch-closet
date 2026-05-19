@@ -1,0 +1,1564 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=1280" />
+  <title>Fetch Closet — Poshmark Bulk Lister</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&family=Caveat:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    /* ============ Fetch Closet — Design tokens ============ */
+    :root {
+      --bg: #F7F4EF;
+      --bg-2: #EFEAE2;
+      --surface: #FFFFFF;
+      --surface-tint: #FBF9F5;
+      --ink: #161513;
+      --ink-2: #4A4641;
+      --ink-3: #7C766E;
+      --ink-4: #B5AFA4;
+      --line: #E8E2D6;
+      --line-2: #D8D1C2;
+
+      --accent: #D43A6F;
+      --accent-2: #B12555;
+      --accent-soft: #FBE7EE;
+      --accent-ink: #4A0E25;
+
+      --ok: #2C7A52;
+      --ok-soft: #DDF0E5;
+      --warn: #B4781E;
+      --warn-soft: #FBEED5;
+      --err: #B43A2C;
+      --err-soft: #FADCD7;
+
+      --font-ui: "Geist", "Söhne", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+      --font-display: "Instrument Serif", "Söhne Breit", Georgia, serif;
+      --font-mono: "Geist Mono", "JetBrains Mono", ui-monospace, Menlo, monospace;
+
+      --r-sm: 6px;
+      --r-md: 10px;
+      --r-lg: 16px;
+      --r-pill: 999px;
+
+      --shadow-1: 0 1px 0 rgba(22,21,19,.04), 0 1px 2px rgba(22,21,19,.04);
+      --shadow-2: 0 1px 0 rgba(22,21,19,.05), 0 6px 16px rgba(22,21,19,.06);
+      --shadow-3: 0 1px 0 rgba(22,21,19,.06), 0 18px 40px rgba(22,21,19,.10);
+    }
+
+    * { box-sizing: border-box; }
+    html, body, #root { height: 100%; margin: 0; }
+    body {
+      font-family: var(--font-ui);
+      font-size: 14px;
+      line-height: 1.45;
+      color: var(--ink);
+      background: var(--bg);
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+    button { font: inherit; color: inherit; cursor: pointer; }
+    input, textarea, select { font: inherit; color: inherit; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+
+    .app {
+      display: grid;
+      grid-template-columns: 260px 1fr;
+      height: 100vh;
+      background: var(--bg);
+      color: var(--ink);
+    }
+
+    .sidebar {
+      border-right: 1px solid var(--line);
+      background: var(--surface-tint);
+      display: flex;
+      flex-direction: column;
+      padding: 22px 18px;
+      gap: 26px;
+    }
+
+    .brand { display: flex; align-items: center; gap: 10px; padding: 4px 4px 0; }
+    .brand-mark {
+      width: 32px; height: 32px;
+      background: var(--ink);
+      color: var(--bg);
+      border-radius: 9px;
+      display: grid; place-items: center;
+      font-family: var(--font-display);
+      font-size: 22px;
+      line-height: 1;
+      padding-bottom: 2px;
+    }
+    .brand-name { font-family: var(--font-display); font-size: 22px; letter-spacing: -0.01em; }
+    .brand-sub { color: var(--ink-3); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; margin-top: 2px; }
+
+    .steps { display: flex; flex-direction: column; gap: 2px; }
+    .step {
+      display: grid;
+      grid-template-columns: 28px 1fr auto;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 10px;
+      border-radius: var(--r-md);
+      cursor: pointer;
+      border: 1px solid transparent;
+      background: transparent;
+      text-align: left;
+      width: 100%;
+      color: var(--ink-2);
+    }
+    .step:hover { background: rgba(0,0,0,.03); }
+    .step.active { background: var(--surface); border-color: var(--line); box-shadow: var(--shadow-1); color: var(--ink); }
+    .step-num {
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      background: var(--bg-2);
+      display: grid; place-items: center;
+      font-size: 12px; font-weight: 500;
+      font-variant-numeric: tabular-nums;
+    }
+    .step.active .step-num { background: var(--ink); color: var(--bg); }
+    .step.done .step-num { background: var(--ok-soft); color: var(--ok); }
+    .step-label { font-size: 13.5px; font-weight: 500; }
+    .step-sub { font-size: 11.5px; color: var(--ink-3); }
+
+    .sidebar-meta { margin-top: auto; padding-top: 16px; border-top: 1px solid var(--line); font-size: 12px; color: var(--ink-3); }
+    .sidebar-meta .row { display: flex; justify-content: space-between; padding: 4px 0; }
+
+    .canvas { display: flex; flex-direction: column; min-width: 0; }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 18px 32px 16px;
+      border-bottom: 1px solid var(--line);
+      background: var(--bg);
+    }
+    .topbar-l { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .topbar h1 { font-family: var(--font-display); font-weight: 400; font-size: 28px; margin: 0; letter-spacing: -0.01em; white-space: nowrap; }
+    .topbar .crumb { font-size: 12px; color: var(--ink-3); letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; }
+    .topbar-r { flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; display: flex; align-items: center; gap: 10px; }
+
+    .workspace { flex: 1; overflow: auto; padding: 28px 32px 64px; }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 8px 14px;
+      border-radius: var(--r-pill);
+      border: 1px solid var(--line-2);
+      background: var(--surface);
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 500;
+      transition: all .14s ease;
+      white-space: nowrap;
+    }
+    .btn:hover { border-color: var(--ink-3); }
+    .btn.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+    .btn.primary:hover { background: var(--accent); border-color: var(--accent); }
+    .btn.accent { background: var(--accent); color: white; border-color: var(--accent); }
+    .btn.accent:hover { background: var(--accent-2); border-color: var(--accent-2); }
+    .btn.ghost { background: transparent; border-color: transparent; }
+    .btn.ghost:hover { background: rgba(0,0,0,.04); border-color: transparent; }
+    .btn.sm { padding: 5px 10px; font-size: 12px; }
+    .btn.icon { padding: 7px; border-radius: 50%; }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--r-lg);
+      box-shadow: var(--shadow-1);
+    }
+    .section-title { font-family: var(--font-display); font-weight: 400; font-size: 22px; letter-spacing: -0.01em; margin: 0 0 4px; }
+    .section-sub { color: var(--ink-3); font-size: 13px; margin: 0 0 18px; max-width: 64ch; }
+
+    .pill {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 2px 8px;
+      border-radius: var(--r-pill);
+      border: 1px solid var(--line-2);
+      background: var(--surface);
+      font-size: 11px;
+      color: var(--ink-2);
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    .pill.dot::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--ink-4); }
+    .pill.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+    .pill.ok::before { background: var(--ok); }
+    .pill.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+    .pill.warn::before { background: var(--warn); }
+    .pill.err { background: var(--err-soft); color: var(--err); border-color: transparent; }
+    .pill.err::before { background: var(--err); }
+    .pill.accent { background: var(--accent-soft); color: var(--accent-2); border-color: transparent; }
+
+    .divider { height: 1px; background: var(--line); border: none; margin: 24px 0; }
+
+    .kbd {
+      display: inline-block; padding: 1px 6px;
+      border: 1px solid var(--line-2); border-bottom-width: 2px; border-radius: 5px;
+      font-family: var(--font-mono); font-size: 11px; background: var(--surface); color: var(--ink-2);
+    }
+
+    .ingest-grid { display: grid; grid-template-columns: 1.2fr 1fr; gap: 20px; }
+    @media (max-width: 1100px) { .ingest-grid { grid-template-columns: 1fr; } }
+
+    .dropzone {
+      border: 1.5px dashed var(--line-2);
+      border-radius: var(--r-lg);
+      padding: 36px;
+      background: var(--surface-tint);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      text-align: center; gap: 8px;
+      min-height: 240px;
+      cursor: pointer;
+      transition: border-color .15s ease, background .15s ease;
+    }
+    .dropzone:hover { border-color: var(--accent); background: var(--accent-soft); }
+    .dropzone .big { font-family: var(--font-display); font-size: 26px; letter-spacing: -0.01em; }
+    .dropzone .small { color: var(--ink-3); font-size: 12.5px; }
+
+    .photo-tray {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(94px, 1fr));
+      gap: 8px;
+      margin-top: 18px;
+    }
+
+    .photo-tile {
+      position: relative;
+      aspect-ratio: 3/4;
+      border-radius: var(--r-md);
+      overflow: hidden;
+      background: var(--bg-2);
+      border: 1px solid var(--line);
+      display: flex; align-items: flex-end; justify-content: flex-start;
+    }
+    .photo-tile .ph-label {
+      position: absolute; bottom: 4px; left: 4px;
+      font-family: var(--font-mono);
+      font-size: 9.5px;
+      background: rgba(22,21,19,.78); color: var(--bg);
+      padding: 2px 5px; border-radius: 4px; letter-spacing: 0.04em;
+    }
+    .photo-tile .ph-suffix {
+      position: absolute; top: 4px; right: 4px;
+      font-size: 9.5px;
+      background: var(--surface); color: var(--ink-2);
+      padding: 2px 5px; border-radius: var(--r-pill);
+      border: 1px solid var(--line); letter-spacing: 0.02em;
+    }
+    .photo-tile .ph-suffix.front { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+
+    .cluster-progress {
+      display: flex; align-items: center; gap: 10px;
+      padding: 12px 16px; background: var(--surface);
+      border-radius: var(--r-lg); border: 1px solid var(--line);
+    }
+    .cluster-progress .bar { flex: 1; height: 6px; background: var(--bg-2); border-radius: 999px; overflow: hidden; }
+    .cluster-progress .bar > div { height: 100%; background: var(--accent); transition: width .4s ease; }
+
+    .stat-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 18px; }
+    .stat { padding: 14px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); }
+    .stat .num { font-family: var(--font-display); font-size: 30px; letter-spacing: -0.02em; line-height: 1; }
+    .stat .lbl { font-size: 11.5px; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 6px; }
+
+    .group-list { display: flex; flex-direction: column; gap: 16px; }
+    .group-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 18px 20px; box-shadow: var(--shadow-1); }
+    .group-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; flex-wrap: wrap; }
+    .group-head-l { display: flex; align-items: center; gap: 12px; min-width: 0; flex: 1 1 auto; flex-wrap: wrap; }
+    .group-folder { font-family: var(--font-mono); font-size: 12px; padding: 4px 9px; background: var(--bg-2); color: var(--ink-2); border-radius: var(--r-sm); white-space: nowrap; flex-shrink: 0; }
+    .group-title { font-family: var(--font-display); font-size: 20px; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    .group-head-r { display: flex; align-items: center; gap: 8px; flex-shrink: 0; flex-wrap: wrap; }
+
+    .group-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; }
+
+    .gp-tile {
+      position: relative; aspect-ratio: 3/4;
+      background: var(--bg-2); border: 1px solid var(--line);
+      border-radius: var(--r-md); overflow: hidden; cursor: pointer;
+    }
+    .gp-tile:hover { border-color: var(--accent); }
+    .gp-tile .gp-name {
+      position: absolute; left: 6px; bottom: 6px; right: 6px;
+      font-family: var(--font-mono); font-size: 9.5px;
+      color: var(--bg); background: rgba(22,21,19,.78);
+      padding: 3px 6px; border-radius: 4px;
+      text-overflow: ellipsis; overflow: hidden; white-space: nowrap;
+    }
+    .gp-suffix-tabs {
+      position: absolute; top: 6px; left: 6px; right: 6px;
+      display: flex; gap: 3px; flex-wrap: wrap;
+    }
+    .gp-suffix-tab {
+      font-size: 9px; padding: 2px 5px;
+      background: rgba(255,255,255,.85); border-radius: 999px;
+      color: var(--ink-2); border: 1px solid transparent;
+      cursor: pointer; letter-spacing: 0.02em; backdrop-filter: blur(4px);
+    }
+    .gp-suffix-tab.active { background: var(--ink); color: var(--bg); }
+
+    .research-layout { display: grid; grid-template-columns: 320px 1fr; gap: 18px; height: calc(100vh - 180px); }
+    .research-list { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); overflow: auto; display: flex; flex-direction: column; }
+    .research-list-head { padding: 12px 14px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; background: var(--surface); z-index: 1; }
+
+    .research-row {
+      display: grid; grid-template-columns: 56px 1fr auto;
+      align-items: center; gap: 12px;
+      padding: 12px 14px; border-bottom: 1px solid var(--line);
+      cursor: pointer; transition: background .12s ease;
+      background: transparent; border-left: 0; border-right: 0; border-top: 0; text-align: left;
+      width: 100%;
+    }
+    .research-row:hover { background: var(--surface-tint); }
+    .research-row.active { background: var(--accent-soft); }
+    .research-row.active::before {
+      content: ''; width: 3px; align-self: stretch;
+      background: var(--accent);
+      margin: -12px 0 -12px -14px; border-radius: 0 3px 3px 0;
+    }
+    .research-thumb { aspect-ratio: 1; border-radius: var(--r-sm); background: var(--bg-2); border: 1px solid var(--line); position: relative; overflow: hidden; }
+    .research-thumb .cloth { position: absolute; inset: 0; display: grid; place-items: center; }
+    .research-thumb .cloth > div { width: 70%; height: 70%; display: grid; place-items: center; }
+    .research-thumb .cloth svg { width: 100%; height: 100%; }
+    .research-row-title { font-weight: 500; font-size: 13.5px; color: var(--ink); text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
+    .research-row-meta { font-size: 11.5px; color: var(--ink-3); display: flex; gap: 8px; align-items: center; margin-top: 2px; }
+
+    .research-detail { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); overflow: auto; }
+    .research-detail-head { display: grid; grid-template-columns: 220px 1fr; gap: 20px; padding: 24px; border-bottom: 1px solid var(--line); }
+    .research-hero { aspect-ratio: 3/4; border-radius: var(--r-md); overflow: hidden; border: 1px solid var(--line); background: var(--bg-2); position: relative; }
+    .research-hero-strip { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-top: 6px; }
+    .research-hero-strip .gp-tile { aspect-ratio: 1; }
+
+    .field-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px 16px; padding: 22px 24px; }
+    .field { display: flex; flex-direction: column; gap: 5px; }
+    .field.full { grid-column: 1 / -1; }
+    .field label { font-size: 11px; color: var(--ink-3); letter-spacing: 0.07em; text-transform: uppercase; display: flex; align-items: center; gap: 6px; }
+    .field input, .field textarea, .field select {
+      padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r-sm);
+      background: var(--surface); font-size: 13.5px; color: var(--ink);
+      font-family: inherit; transition: border-color .12s;
+    }
+    .field input:focus, .field textarea:focus, .field select:focus { outline: none; border-color: var(--accent); }
+    .field textarea { resize: vertical; min-height: 110px; line-height: 1.55; }
+    .field.lowconf input, .field.lowconf textarea, .field.lowconf select { background: var(--warn-soft); border-color: var(--warn); }
+    .field-help { font-size: 11.5px; color: var(--ink-3); }
+
+    .research-detail-foot { display: flex; justify-content: space-between; align-items: center; padding: 16px 24px; border-top: 1px solid var(--line); background: var(--surface-tint); }
+
+    .export-grid { display: grid; grid-template-columns: 1fr 320px; gap: 20px; align-items: start; }
+    @media (max-width: 1100px) { .export-grid { grid-template-columns: 1fr; } }
+
+    .xlsx-preview { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); overflow: hidden; }
+    .xlsx-tabs { display: flex; gap: 0; padding: 8px 12px 0; border-bottom: 1px solid var(--line); background: var(--surface-tint); position: relative; z-index: 2; }
+    .xlsx-tab {
+      padding: 6px 12px; font-size: 12px;
+      border-radius: 6px 6px 0 0; border: 1px solid transparent; border-bottom: none;
+      background: transparent; color: var(--ink-3); margin-bottom: -1px;
+    }
+    .xlsx-tab.active { background: var(--surface); border-color: var(--line); color: var(--ink); font-weight: 500; }
+
+    .xlsx-scroll { overflow: auto; max-height: 540px; }
+    .xlsx-table { border-collapse: separate; border-spacing: 0; font-size: 12px; font-family: var(--font-mono); width: max-content; }
+    .xlsx-table th, .xlsx-table td { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 6px 10px; background: var(--surface); white-space: nowrap; vertical-align: top; }
+    .xlsx-table th { background: var(--bg-2); font-weight: 500; color: var(--ink-2); position: sticky; top: 0; text-align: left; font-family: var(--font-ui); font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; }
+    .xlsx-table .row-num { background: var(--bg-2); color: var(--ink-3); position: sticky; left: 0; font-size: 11px; text-align: right; min-width: 36px; }
+    .xlsx-table .header-row td { background: var(--surface-tint); font-weight: 500; color: var(--ink-2); font-family: var(--font-ui); font-size: 11.5px; }
+    .xlsx-table .instruction-row td { background: var(--accent-soft); color: var(--accent-ink); font-style: italic; font-family: var(--font-ui); font-size: 11.5px; }
+    .xlsx-table td.empty { color: var(--ink-4); }
+    .xlsx-table td.flag { background: var(--warn-soft); color: var(--warn); }
+
+    .export-side { display: flex; flex-direction: column; gap: 14px; }
+    .export-card { padding: 22px; }
+    .export-card h3 { font-family: var(--font-display); font-weight: 400; font-size: 22px; margin: 0 0 4px; }
+    .export-card .sub { color: var(--ink-3); font-size: 13px; margin: 0 0 18px; }
+
+    .export-summary { display: flex; flex-direction: column; gap: 8px; margin-bottom: 18px; }
+    .export-summary .row { display: flex; justify-content: space-between; padding: 7px 0; border-bottom: 1px dashed var(--line); font-size: 13px; }
+    .export-summary .row:last-child { border-bottom: 0; }
+    .export-summary .lbl { color: var(--ink-3); }
+    .export-summary .val { font-family: var(--font-mono); }
+
+    .export-filename {
+      padding: 10px 12px; background: var(--bg-2); border-radius: var(--r-sm);
+      font-family: var(--font-mono); font-size: 12px; color: var(--ink-2);
+      display: flex; align-items: center; gap: 8px; margin-bottom: 14px;
+      word-break: break-all;
+    }
+
+    .review-list { padding: 0; }
+    .review-list .review-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px dashed var(--line); font-size: 12.5px; }
+    .review-list .review-item:last-child { border-bottom: 0; }
+    .review-list .review-item .name { flex: 1; font-weight: 500; }
+    .review-list .review-item .why { color: var(--ink-3); font-size: 11.5px; }
+
+    .modal-veil { position: fixed; inset: 0; background: rgba(22,21,19,.5); backdrop-filter: blur(4px); display: grid; place-items: center; z-index: 50; padding: 32px; }
+    .modal { background: var(--surface); border-radius: var(--r-lg); box-shadow: var(--shadow-3); max-width: 720px; width: 100%; max-height: 86vh; overflow: auto; }
+    .modal-head { padding: 18px 22px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; }
+    .modal-body { padding: 22px; }
+
+    .cloth { position: absolute; inset: 0; display: grid; place-items: center; }
+    .cloth svg { width: 78%; height: 78%; }
+
+    .bg-denim { background: linear-gradient(160deg, #5C7AA1, #324563); }
+    .bg-cream { background: linear-gradient(160deg, #F5EFE0, #DCD2BB); }
+    .bg-charcoal { background: linear-gradient(160deg, #3A3A3A, #1C1C1C); }
+    .bg-floral { background:
+      radial-gradient(circle at 30% 40%, #F2A6B9 8%, transparent 9%),
+      radial-gradient(circle at 70% 30%, #E9C8B4 7%, transparent 8%),
+      radial-gradient(circle at 50% 70%, #B4D2A6 8%, transparent 9%),
+      radial-gradient(circle at 20% 80%, #F2A6B9 6%, transparent 7%),
+      linear-gradient(160deg, #F6E9DD, #E9D2C5);
+    }
+    .bg-pink { background: linear-gradient(160deg, #E48BA2, #B85272); }
+    .bg-olive { background: linear-gradient(160deg, #7E8A5A, #4F5A35); }
+    .bg-tag { background: linear-gradient(160deg, #FAF6EB, #E3DAC0); }
+    .bg-label { background: linear-gradient(160deg, #F9F9F7, #E5E2DA); }
+    .bg-closeup { background: linear-gradient(160deg, #C8C0B1, #8B8273); }
+    .bg-back { background: linear-gradient(180deg, var(--c1, #888), var(--c2, #555)); }
+
+    .cloth-label-text {
+      position: absolute; top: 50%; left: 50%;
+      transform: translate(-50%, -50%) rotate(-2deg);
+      font-family: var(--font-mono); font-size: 9px; color: var(--ink-2);
+      background: rgba(255,255,255,.7); padding: 4px 8px; border-radius: 3px;
+      letter-spacing: 0.06em; text-align: center; line-height: 1.4;
+    }
+    .cloth-tag {
+      position: absolute; top: 12%; right: 14%;
+      transform: rotate(8deg);
+      background: #FBF7E8; border: 1px solid #C5B888;
+      padding: 4px 6px; font-family: var(--font-mono); font-size: 8px;
+      letter-spacing: 0.04em; color: #7A6C3E; border-radius: 2px;
+      box-shadow: 0 1px 0 rgba(0,0,0,.1);
+    }
+
+    .toast {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+      background: var(--ink); color: var(--bg);
+      padding: 10px 16px; border-radius: var(--r-pill);
+      font-size: 13px; box-shadow: var(--shadow-3); z-index: 100;
+      display: flex; align-items: center; gap: 10px;
+    }
+
+    .row-flex { display: flex; align-items: center; gap: 8px; }
+    .muted { color: var(--ink-3); }
+    .tabular { font-variant-numeric: tabular-nums; }
+    .scroll-x { overflow-x: auto; }
+    .spin { animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .fade-in { animation: fade .3s ease; }
+    @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+    /* ============ Mood: Vault (dark + amber + luxe) ============ */
+    .mood-vault {
+      --bg: #1A1815;
+      --bg-2: #232019;
+      --surface: #221F19;
+      --surface-tint: #1F1C16;
+      --ink: #F2EBDD;
+      --ink-2: #BEB6A4;
+      --ink-3: #8A8270;
+      --ink-4: #58503F;
+      --line: #2E2A22;
+      --line-2: #3A352B;
+      --accent: #E0A53D;
+      --accent-2: #C68A22;
+      --accent-soft: #3A2E18;
+      --accent-ink: #FCE4B0;
+      --ok: #79C19A;
+      --ok-soft: #1F3A2C;
+      --warn: #E0A53D;
+      --warn-soft: #3A2E18;
+      --err: #E18470;
+      --err-soft: #3A201C;
+      --shadow-1: 0 1px 0 rgba(0,0,0,.4), 0 1px 2px rgba(0,0,0,.3);
+      --shadow-2: 0 1px 0 rgba(0,0,0,.5), 0 8px 22px rgba(0,0,0,.5);
+      --shadow-3: 0 1px 0 rgba(0,0,0,.6), 0 22px 50px rgba(0,0,0,.6);
+    }
+    .mood-vault .brand-mark { background: var(--accent); color: var(--bg); }
+    .mood-vault .btn { background: var(--surface-tint); border-color: var(--line-2); color: var(--ink); }
+    .mood-vault .btn:hover { border-color: var(--ink-3); }
+    .mood-vault .btn.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+    .mood-vault .btn.primary:hover { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+    .mood-vault .btn.accent { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+    .mood-vault .btn.accent:hover { background: var(--accent-2); border-color: var(--accent-2); color: var(--bg); }
+    .mood-vault .btn.ghost { background: transparent; border-color: transparent; }
+    .mood-vault .btn.ghost:hover { background: rgba(255,255,255,.05); }
+    .mood-vault .pill { background: var(--surface-tint); }
+    .mood-vault input, .mood-vault textarea, .mood-vault select {
+      background: var(--bg-2);
+      color: var(--ink);
+      border-color: var(--line-2);
+    }
+    .mood-vault .field input:focus, .mood-vault .field textarea:focus, .mood-vault .field select:focus { border-color: var(--accent); }
+    .mood-vault .step.active .step-num { background: var(--accent); color: var(--bg); }
+    .mood-vault .step.active { background: var(--surface); }
+    .mood-vault .step.done .step-num { background: var(--ok-soft); color: var(--ok); }
+    .mood-vault .xlsx-table th { background: var(--bg-2); color: var(--ink-2); }
+    .mood-vault .xlsx-table .row-num { background: var(--bg-2); color: var(--ink-3); }
+    .mood-vault .xlsx-table th, .mood-vault .xlsx-table td { background: var(--surface); }
+    .mood-vault .xlsx-table .header-row td { background: var(--surface-tint); }
+    .mood-vault .xlsx-table .instruction-row td { background: var(--accent-soft); color: var(--accent-ink); }
+    .mood-vault .xlsx-table td.flag { background: rgba(224,165,61,.18); color: var(--warn); }
+    .mood-vault .xlsx-tabs { background: var(--surface-tint); }
+    .mood-vault .xlsx-tab.active { background: var(--surface); }
+    .mood-vault .dropzone { background: var(--surface-tint); border-color: var(--line-2); }
+    .mood-vault .dropzone:hover { background: var(--accent-soft); border-color: var(--accent); }
+    .mood-vault .photo-tile .ph-suffix { background: var(--surface); border-color: var(--line-2); color: var(--ink-2); }
+    .mood-vault .gp-suffix-tab { background: rgba(255,255,255,.85); }
+    .mood-vault .research-row.active { background: var(--accent-soft); }
+    .mood-vault .research-row.active .research-row-title { color: var(--accent-ink); }
+    .mood-vault .modal { background: var(--surface); }
+    .mood-vault .kbd { background: var(--bg-2); border-color: var(--line-2); }
+
+    /* ============ Density: Workhorse (compact, sans headers) ============ */
+    .density-workhorse {
+      --r-lg: 8px;
+      --r-md: 6px;
+    }
+    .density-workhorse .topbar { padding: 12px 24px 10px; }
+    .density-workhorse .topbar h1 {
+      font-family: var(--font-ui);
+      font-weight: 600;
+      font-size: 18px;
+      letter-spacing: -0.01em;
+    }
+    .density-workhorse .topbar .crumb { font-size: 10.5px; }
+    .density-workhorse .workspace { padding: 18px 24px 36px; }
+    .density-workhorse .section-title {
+      font-family: var(--font-ui);
+      font-weight: 600;
+      font-size: 14px;
+      letter-spacing: -0.005em;
+    }
+    .density-workhorse .section-sub { font-size: 12px; margin-bottom: 12px; }
+    .density-workhorse .stat { padding: 8px 10px; }
+    .density-workhorse .stat .num {
+      font-family: var(--font-ui);
+      font-weight: 600;
+      font-size: 20px;
+      letter-spacing: -0.01em;
+    }
+    .density-workhorse .stat .lbl { font-size: 10px; margin-top: 3px; }
+    .density-workhorse .stat-row { gap: 8px; margin-top: 12px; }
+    .density-workhorse .sidebar { padding: 14px 12px; gap: 14px; }
+    .density-workhorse .brand-name {
+      font-family: var(--font-ui);
+      font-weight: 600;
+      font-size: 15px;
+    }
+    .density-workhorse .brand-mark { width: 26px; height: 26px; font-size: 16px; font-family: var(--font-ui); font-weight: 600; padding-bottom: 0; }
+    .density-workhorse .step { padding: 6px 8px; }
+    .density-workhorse .step-num { width: 22px; height: 22px; font-size: 11px; }
+    .density-workhorse .step-label { font-size: 12.5px; }
+    .density-workhorse .step-sub { font-size: 10.5px; }
+    .density-workhorse .group-card { padding: 12px 14px; border-radius: 8px; }
+    .density-workhorse .group-head { margin-bottom: 10px; }
+    .density-workhorse .group-title {
+      font-family: var(--font-ui);
+      font-weight: 600;
+      font-size: 14px;
+      letter-spacing: -0.005em;
+    }
+    .density-workhorse .group-photos {
+      gap: 6px;
+      grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+    }
+    .density-workhorse .dropzone {
+      min-height: 140px;
+      padding: 22px;
+      border-radius: 8px;
+    }
+    .density-workhorse .dropzone .big {
+      font-family: var(--font-ui);
+      font-weight: 600;
+      font-size: 16px;
+    }
+    .density-workhorse .dropzone .small { font-size: 11.5px; }
+    .density-workhorse .field-grid { padding: 14px 16px; gap: 10px 14px; }
+    .density-workhorse .field label { font-size: 10px; }
+    .density-workhorse .field input,
+    .density-workhorse .field textarea,
+    .density-workhorse .field select { font-size: 12.5px; padding: 6px 8px; }
+    .density-workhorse .field textarea { min-height: 80px; }
+    .density-workhorse .research-detail-head { padding: 14px 16px; grid-template-columns: 140px 1fr; gap: 14px; }
+    .density-workhorse .research-detail-foot { padding: 10px 16px; }
+    .density-workhorse .research-row { padding: 8px 12px; grid-template-columns: 44px 1fr auto; gap: 10px; }
+    .density-workhorse .research-row-title { font-size: 12.5px; }
+    .density-workhorse .research-row-meta { font-size: 10.5px; }
+    .density-workhorse .export-card { padding: 16px; }
+    .density-workhorse .export-card h3 {
+      font-family: var(--font-ui);
+      font-weight: 600;
+      font-size: 14px;
+    }
+    .density-workhorse .export-summary .row { padding: 5px 0; font-size: 12px; }
+    .density-workhorse .xlsx-table th, .density-workhorse .xlsx-table td { padding: 4px 8px; font-size: 11.5px; }
+    .density-workhorse .research-detail-head h2.section-title { font-size: 18px !important; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
+
+  <script type="text/babel" data-presets="react">
+    const { useState, useEffect, useMemo, useRef, Fragment } = React;
+
+    /* ========================= DATA ========================= */
+    const TODAY = (() => {
+      const d = new Date();
+      return `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,"0")}${String(d.getDate()).padStart(2,"0")}`;
+    })();
+
+    const SILHOUETTES = {
+      shorts: (
+        <svg viewBox="0 0 100 100" fill="rgba(255,255,255,.12)" stroke="rgba(255,255,255,.5)" strokeWidth="1.2">
+          <path d="M22 20 L78 20 L82 48 L70 90 L55 90 L50 55 L45 90 L30 90 L18 48 Z" />
+          <line x1="22" y1="28" x2="78" y2="28" />
+        </svg>
+      ),
+      hoodie: (
+        <svg viewBox="0 0 100 100" fill="rgba(255,255,255,.12)" stroke="rgba(255,255,255,.5)" strokeWidth="1.2">
+          <path d="M30 18 Q50 8 70 18 L86 30 L80 50 L80 88 L20 88 L20 50 L14 30 Z" />
+          <path d="M40 18 Q50 30 60 18" />
+          <line x1="50" y1="50" x2="50" y2="88" />
+        </svg>
+      ),
+      tee: (
+        <svg viewBox="0 0 100 100" fill="rgba(255,255,255,.12)" stroke="rgba(0,0,0,.18)" strokeWidth="1.2">
+          <path d="M28 18 L42 16 Q50 24 58 16 L72 18 L88 28 L80 42 L72 38 L72 88 L28 88 L28 38 L20 42 L12 28 Z" />
+        </svg>
+      ),
+      dress: (
+        <svg viewBox="0 0 100 100" fill="rgba(255,255,255,.18)" stroke="rgba(0,0,0,.2)" strokeWidth="1.2">
+          <path d="M36 14 L42 14 Q50 22 58 14 L64 14 L72 28 L68 36 L78 92 L22 92 L32 36 L28 28 Z" />
+        </svg>
+      ),
+      leggings: (
+        <svg viewBox="0 0 100 100" fill="rgba(255,255,255,.12)" stroke="rgba(255,255,255,.4)" strokeWidth="1.2">
+          <path d="M30 12 L70 12 L72 22 L66 92 L54 92 L52 38 L50 38 L48 38 L46 92 L34 92 L28 22 Z" />
+          <line x1="30" y1="22" x2="70" y2="22" />
+        </svg>
+      ),
+    };
+
+    const INITIAL_GARMENTS = [
+      {
+        id: "001",
+        folder: `clothing_upload_${TODAY}_001`,
+        detected: {
+          brand: "Free People", product: "Carpe Diem Shorts",
+          title: "NWT Free People Carpe Diem Shorts",
+          isNWT: true, msrp: 78, price: 42,
+          stockUrl: "https://images.freepeople.com/is/image/FreePeople/carpe-diem.jpg",
+          description: `NWT Free People Carpe Diem Shorts — denim cutoffs in a soft mid-wash blue.\n\nEffortlessly cool relaxed-fit denim shorts from Free People's beloved Carpe Diem line. Frayed raw hem, classic five-pocket styling, and a high-rise waist that hits at the perfect spot. The wash has just enough character — broken-in feel, brand-new condition.\n\nMeasurements (laid flat):\n• Waist: __ in\n• Rise: __ in\n• Inseam: __ in\n\nOriginal retail $78.\n\n#FreePeople #CarpeDiem #DenimShorts #NWT #BohoStyle #FestivalReady #SummerOutfit #VintageWash`,
+          department: "Women", category: "Shorts", subcategory: "Jean Shorts",
+          size: "27", condition: "NWT", color1: "Blue", color2: "", sku: "FP0001",
+        },
+        confidence: { stockUrl: "low", subcategory: "low" },
+        silhouette: "shorts", palette: { c1: "#5C7AA1", c2: "#324563" },
+        photos: [
+          { suffix: "front", bg: "bg-denim", silhouette: "shorts" },
+          { suffix: "back",  bg: "bg-back", silhouette: "shorts", palette: { c1: "#5C7AA1", c2: "#2A3A53" } },
+          { suffix: "label", bg: "bg-label", labelText: "FREE\nPEOPLE\nSZ 27" },
+          { suffix: "callout", bg: "bg-tag", silhouette: null, tag: "NWT $78" },
+          { suffix: "closeup", bg: "bg-closeup", silhouette: null },
+        ],
+      },
+      {
+        id: "002",
+        folder: `clothing_upload_${TODAY}_002`,
+        detected: {
+          brand: "Nike", product: "Sportswear Tech Fleece Hoodie",
+          title: "Nike Sportswear Tech Fleece Hoodie",
+          isNWT: false, msrp: 130, price: 58,
+          stockUrl: "https://static.nike.com/a/images/tech-fleece-hoodie-charcoal.jpg",
+          description: `Nike Sportswear Tech Fleece Hoodie in classic charcoal heather — the cult-favorite lightweight fleece everyone owns for a reason.\n\nThis is the full-zip version with the signature ribbed seam detailing and roomy front pockets. Worn a handful of times, no pilling, all hardware intact. Holds its shape beautifully.\n\nMeasurements (laid flat):\n• Pit to pit: __ in\n• Length: __ in\n• Sleeve: __ in\n\nOriginal retail $130.\n\n#Nike #TechFleece #Hoodie #StreetWear #Athleisure #NikeSportswear #Charcoal #Lounge`,
+          department: "Men", category: "Sweaters", subcategory: "",
+          size: "L", condition: "Like New", color1: "Gray", color2: "", sku: "N0001",
+        },
+        confidence: {},
+        silhouette: "hoodie", palette: { c1: "#3A3A3A", c2: "#1C1C1C" },
+        photos: [
+          { suffix: "front", bg: "bg-charcoal", silhouette: "hoodie" },
+          { suffix: "back",  bg: "bg-back", silhouette: "hoodie", palette: { c1: "#3A3A3A", c2: "#1C1C1C" } },
+          { suffix: "label", bg: "bg-label", labelText: "NIKE\nSZ L" },
+          { suffix: "closeup", bg: "bg-closeup", silhouette: null },
+        ],
+      },
+      {
+        id: "003",
+        folder: `clothing_upload_${TODAY}_003`,
+        detected: {
+          brand: "Madewell", product: "Whisper Cotton Crewneck Tee",
+          title: "Madewell Whisper Cotton Crewneck Tee",
+          isNWT: false, msrp: 24, price: 14,
+          stockUrl: "https://www.madewell.com/images/whisper-cotton-crewneck-cream.jpg",
+          description: `Madewell Whisper Cotton Crewneck Tee in soft cream — the everyday basic that earns its place in the rotation.\n\nButtery, almost-sheer cotton that's been worn enough to feel like yours from day one. Classic crewneck, short sleeves, hits at the hip. Excellent gently-used condition.\n\nMeasurements (laid flat):\n• Pit to pit: __ in\n• Length: __ in\n• Sleeve: __ in\n\nOriginal retail $24.\n\n#Madewell #WhisperTee #Crewneck #CottonTee #Basic #Cream #EverydayBasics`,
+          department: "Women", category: "Tops", subcategory: "Tees - Short Sleeve",
+          size: "S", condition: "Like New", color1: "Cream", color2: "", sku: "M0001",
+        },
+        confidence: {},
+        silhouette: "tee", palette: { c1: "#F5EFE0", c2: "#DCD2BB" },
+        photos: [
+          { suffix: "front", bg: "bg-cream", silhouette: "tee" },
+          { suffix: "back",  bg: "bg-back", silhouette: "tee", palette: { c1: "#F5EFE0", c2: "#DCD2BB" } },
+          { suffix: "label", bg: "bg-label", labelText: "MADEWELL\nSZ S" },
+          { suffix: "closeup", bg: "bg-closeup", silhouette: null },
+        ],
+      },
+      {
+        id: "004",
+        folder: `clothing_upload_${TODAY}_004`,
+        detected: {
+          brand: "Reformation", product: "Juliette Midi Dress",
+          title: "[NEEDS REVIEW] Reformation Juliette Midi Dress",
+          isNWT: false, msrp: 248, price: null,
+          stockUrl: "",
+          description: `Reformation Juliette Midi Dress in a romantic ditsy floral print.\n\nFlirty button-front midi with a fitted bodice, smocked back, and a flowy A-line skirt that catches the breeze. Excellent condition — light wear, no flaws. Perfect for weddings, dinners, or a warm-weather brunch.\n\nMeasurements (laid flat):\n• Bust: __ in\n• Waist: __ in\n• Length (shoulder to hem): __ in\n\nOriginal retail $248.\n\n#Reformation #JulietteDress #MidiDress #FloralDress #WeddingGuest #SustainableFashion #Boho`,
+          department: "Women", category: "Dresses", subcategory: "Midi",
+          size: "", condition: "Like New", color1: "Pink", color2: "Cream", sku: "R0001",
+        },
+        confidence: { price: "low", stockUrl: "low", size: "low", title: "low" },
+        silhouette: "dress", palette: { c1: "#F6E9DD", c2: "#E9D2C5" },
+        photos: [
+          { suffix: "front", bg: "bg-floral", silhouette: "dress" },
+          { suffix: "back",  bg: "bg-back", silhouette: "dress", palette: { c1: "#E9C8B4", c2: "#B89478" } },
+          { suffix: "closeup", bg: "bg-closeup", silhouette: null },
+          { suffix: "closeup", bg: "bg-closeup", silhouette: null },
+        ],
+      },
+      {
+        id: "005",
+        folder: `clothing_upload_${TODAY}_005`,
+        detected: {
+          brand: "Lululemon", product: 'Align High-Rise Pant 25"',
+          title: 'Lululemon Align High-Rise Pant 25" Black',
+          isNWT: false, msrp: 98, price: 48,
+          stockUrl: "https://shop.lululemon.com/p/align-pant-25-black.jpg",
+          description: `Lululemon Align High-Rise Pant 25" in classic black — the buttery-soft Nulu leggings that converted you in the first place.\n\nWear-everywhere staple in great pre-loved condition. No piling, no transparency, full coverage at the waistband. Hits at the ankle on most heights.\n\nMeasurements (laid flat):\n• Waist: __ in\n• Inseam: 25 in\n• Rise: __ in\n\nOriginal retail $98.\n\n#Lululemon #Align #AlignPant #BlackLeggings #Nulu #Athleisure #YogaPants`,
+          department: "Women", category: "Pants & Jumpsuits", subcategory: "Leggings",
+          size: "6", condition: "Good", color1: "Black", color2: "", sku: "L0001",
+        },
+        confidence: {},
+        silhouette: "leggings", palette: { c1: "#2A2A2A", c2: "#0A0A0A" },
+        photos: [
+          { suffix: "front", bg: "bg-charcoal", silhouette: "leggings" },
+          { suffix: "back",  bg: "bg-back", silhouette: "leggings", palette: { c1: "#2A2A2A", c2: "#0A0A0A" } },
+          { suffix: "label", bg: "bg-label", labelText: "LULU\nSZ 6" },
+          { suffix: "closeup", bg: "bg-closeup", silhouette: null },
+        ],
+      },
+    ];
+
+    INITIAL_GARMENTS.forEach((g) => {
+      g.photos.forEach((p, i) => {
+        const ext = "jpg";
+        const dupBefore = g.photos.filter((q, qi) => q.suffix === p.suffix && qi < i).length;
+        p.filename = `clothing_upload_${TODAY}_${g.id}_${p.suffix}${dupBefore > 0 ? (dupBefore + 1) : ""}.${ext}`;
+      });
+    });
+
+    const TOTAL_PHOTOS = INITIAL_GARMENTS.reduce((n, g) => n + g.photos.length, 0);
+
+    const SUFFIXES = ["front", "back", "label", "closeup", "callout"];
+    const DEPARTMENTS = ["Women", "Men", "Kids", "Home", "Electronics", "Pets"];
+    const COLORS = ["Red","Pink","Orange","Yellow","Green","Blue","Purple","Gold","Silver","Black","Gray","White","Cream","Brown","Tan"];
+    const CONDITIONS = ["NWT", "Like New", "Good", "Fair"];
+
+    const COLUMNS = [
+      "SKU", "Title", "Description", "Department", "Category", "Sub-category", "Quantity",
+      "Size", "Condition", "Brand", "Color1", "Color2", "Original Price", "Listing Price",
+      "Availability", "Primary image",
+      "Alt image 1", "Alt image 2", "Alt image 3",
+      "ProductID", "VariantGroupID",
+      "Style Tag1", "Style Tag2", "Style Tag3",
+      "Shipping Discount", "Price Floor", "Minimum Price", "Drop time",
+      "Other info", "Copy Listing?", "Update Existing SKU?", "NEW SKU"
+    ];
+
+    function rowFor(g) {
+      const d = g.detected;
+      return {
+        "SKU": d.sku,
+        "Title": d.title,
+        "Description": d.description,
+        "Department": d.department,
+        "Category": d.category,
+        "Sub-category": d.subcategory,
+        "Quantity": "1",
+        "Size": d.size,
+        "Condition": d.condition,
+        "Brand": d.brand,
+        "Color1": d.color1,
+        "Color2": d.color2,
+        "Original Price": d.msrp ?? "",
+        "Listing Price": d.price ?? "",
+        "Availability": "Not For Sale",
+        "Primary image": d.stockUrl,
+      };
+    }
+
+    /* ========================= ICONS ========================= */
+    const Icon = {
+      upload: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>,
+      check: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>,
+      download: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>,
+      arrow: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>,
+      spark: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3 L13.5 10.5 L21 12 L13.5 13.5 L12 21 L10.5 13.5 L3 12 L10.5 10.5 Z"/></svg>,
+      warn: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>,
+      x: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
+      folder: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>,
+      refresh: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>,
+      search: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>,
+      eye: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>,
+      external: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>,
+    };
+
+    /* ========================= LAYOUT ========================= */
+    function Sidebar({ step, setStep, status, garments }) {
+      const steps = [
+        { id: 0, label: "Photos", sub: "Ingest & cluster" },
+        { id: 1, label: "Groups", sub: "Review garments" },
+        { id: 2, label: "Research", sub: "Listing details" },
+        { id: 3, label: "Export", sub: "Bulk upload" },
+      ];
+      return (
+        <aside className="sidebar">
+          <div className="brand">
+            <div className="brand-mark">F</div>
+            <div>
+              <div className="brand-name">Fetch Closet</div>
+              <div className="brand-sub">Poshmark Bulk Lister</div>
+            </div>
+          </div>
+          <nav className="steps">
+            {steps.map((s) => (
+              <button
+                key={s.id}
+                className={`step ${step === s.id ? "active" : ""} ${status[s.id] === "done" ? "done" : ""}`}
+                onClick={() => setStep(s.id)}
+              >
+                <span className="step-num">{status[s.id] === "done" ? Icon.check : s.id + 1}</span>
+                <span>
+                  <div className="step-label">{s.label}</div>
+                  <div className="step-sub">{s.sub}</div>
+                </span>
+                <span />
+              </button>
+            ))}
+          </nav>
+          <div className="sidebar-meta">
+            <div className="row"><span>Source folder</span><span className="tabular">~/Closet</span></div>
+            <div className="row"><span>Date stamp</span><span className="tabular">{TODAY}</span></div>
+            <div className="row"><span>Photos found</span><span className="tabular">{TOTAL_PHOTOS}</span></div>
+            <div className="row"><span>Garments</span><span className="tabular">{garments.length}</span></div>
+          </div>
+        </aside>
+      );
+    }
+
+    function Topbar({ crumb, title, right }) {
+      return (
+        <div className="topbar">
+          <div className="topbar-l">
+            <div className="crumb">{crumb}</div>
+            <h1>{title}</h1>
+          </div>
+          <div className="topbar-r">{right}</div>
+        </div>
+      );
+    }
+
+    function Toast({ msg }) {
+      if (!msg) return null;
+      return <div className="toast">{Icon.check}{msg}</div>;
+    }
+
+    /* ========================= STEP 1 — PHOTOS ========================= */
+    function StepPhotos({ onContinue, status, setStatus, garments }) {
+      const initialPhase = status[0] === "done" ? "done" : "idle";
+      const [phase, setPhase] = useState(initialPhase);
+      const [progress, setProgress] = useState(initialPhase === "done" ? 100 : 0);
+      const [clustered, setClustered] = useState(initialPhase === "done" ? garments.length : 0);
+
+      const allPhotos = useMemo(() => garments.flatMap((g) => g.photos.map((p) => ({ ...p, garment: g }))), [garments]);
+
+      function runIngest() {
+        setPhase("loading");
+        setProgress(0);
+        let pct = 0;
+        const tick = setInterval(() => {
+          pct += 7 + Math.random() * 12;
+          if (pct >= 100) {
+            clearInterval(tick);
+            setProgress(100);
+            setPhase("clustering");
+            let g = 0;
+            const tick2 = setInterval(() => {
+              g += 1;
+              setClustered(g);
+              if (g >= garments.length) {
+                clearInterval(tick2);
+                setPhase("done");
+                setStatus((s) => ({ ...s, 0: "done" }));
+              }
+            }, 320);
+          } else {
+            setProgress(pct);
+          }
+        }, 120);
+      }
+
+      return (
+        <>
+          <Topbar
+            crumb="Step 1 of 4"
+            title="Photos"
+            right={
+              phase === "done" ? (
+                <button className="btn primary" onClick={onContinue}>Review groups {Icon.arrow}</button>
+              ) : phase === "idle" ? (
+                <button className="btn primary" onClick={runIngest}>{Icon.spark} Ingest & auto-group</button>
+              ) : (
+                <button className="btn" disabled><span className="spin" style={{display:'inline-flex'}}>{Icon.refresh}</span> Working…</button>
+              )
+            }
+          />
+          <div className="workspace">
+            <p className="section-sub">
+              Drop a folder of unsorted clothing photos. Fetch Closet clusters them into individual garments by visual
+              similarity, color, pattern, and EXIF timestamp — then classifies each shot as <span className="pill dot">front</span> <span className="pill dot">back</span> <span className="pill dot">label</span> <span className="pill dot">closeup</span> or <span className="pill dot">callout</span>.
+            </p>
+
+            <div className="ingest-grid">
+              <section>
+                <div className="card" style={{ padding: 20 }}>
+                  <div className="dropzone" onClick={phase === "idle" ? runIngest : undefined}>
+                    <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
+                      <div className="pill dot">{Icon.folder}<span>~/Closet/Summer-Drop-1</span></div>
+                    </div>
+                    <div className="big">{phase === "idle" ? "Drop a folder of photos" : phase === "loading" ? "Reading photos…" : phase === "clustering" ? "Clustering by garment…" : "Ingestion complete"}</div>
+                    <div className="small">
+                      {phase === "idle" && <>or click to browse · accepts <span className="kbd">.jpg</span> <span className="kbd">.png</span> <span className="kbd">.heic</span></>}
+                      {phase === "loading" && <>Decoding EXIF, building visual fingerprints</>}
+                      {phase === "clustering" && <>Grouping by garment, classifying shot types</>}
+                      {phase === "done" && <>{TOTAL_PHOTOS} photos · {garments.length} unique garments</>}
+                    </div>
+                  </div>
+
+                  {(phase === "loading" || phase === "clustering" || phase === "done") && (
+                    <div className="cluster-progress" style={{ marginTop: 14 }}>
+                      <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--ink-3)" }}>
+                        {phase === "loading" ? `Reading ${Math.min(TOTAL_PHOTOS, Math.round(TOTAL_PHOTOS * progress / 100))} / ${TOTAL_PHOTOS}` : `Clustered ${clustered} / ${garments.length} garments`}
+                      </div>
+                      <div className="bar">
+                        <div style={{ width: phase === "loading" ? `${progress}%` : `${(clustered / garments.length) * 100}%` }} />
+                      </div>
+                      {phase === "done" && <span className="pill ok">{Icon.check} Done</span>}
+                    </div>
+                  )}
+
+                  <div className="stat-row">
+                    <div className="stat"><div className="num tabular">{TOTAL_PHOTOS}</div><div className="lbl">Photos</div></div>
+                    <div className="stat"><div className="num tabular">{phase === "done" ? garments.length : (phase === "clustering" ? clustered : "—")}</div><div className="lbl">Garments</div></div>
+                    <div className="stat"><div className="num tabular">{phase === "done" ? garments.filter((g) => g.detected.isNWT).length : "—"}</div><div className="lbl">NWT detected</div></div>
+                    <div className="stat"><div className="num tabular">{phase === "done" ? Object.keys(garments.reduce((a, g) => ({ ...a, [g.detected.brand]: 1 }), {})).length : "—"}</div><div className="lbl">Brands</div></div>
+                  </div>
+                </div>
+              </section>
+
+              <section>
+                <div className="card" style={{ padding: 18 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <h3 className="section-title" style={{ fontSize: 18 }}>Source photos</h3>
+                    <span className="pill dot">{TOTAL_PHOTOS} files</span>
+                  </div>
+                  <p className="section-sub" style={{ marginBottom: 12 }}>Raw, un-renamed. Click a tile to preview.</p>
+                  <div className="photo-tray">
+                    {allPhotos.map((p, i) => (
+                      <div key={i} className={`photo-tile ${p.bg} fade-in`} style={p.palette ? { "--c1": p.palette.c1, "--c2": p.palette.c2 } : undefined}>
+                        <div className="cloth">{p.silhouette ? SILHOUETTES[p.silhouette] : (p.garment.silhouette && (p.suffix === "front" || p.suffix === "back") ? SILHOUETTES[p.garment.silhouette] : null)}</div>
+                        {p.labelText && <div className="cloth-label-text">{p.labelText.split("\n").map((l, ix) => <div key={ix}>{l}</div>)}</div>}
+                        {p.tag && <div className="cloth-tag">{p.tag}</div>}
+                        <div className="ph-label">IMG_{1000 + i}</div>
+                        {phase === "done" && (
+                          <div className={`ph-suffix ${p.suffix === "front" ? "front" : ""}`}>{p.suffix}</div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </section>
+            </div>
+          </div>
+        </>
+      );
+    }
+
+    /* ========================= STEP 2 — GROUPS ========================= */
+    function StepGroups({ onContinue, onBack, status, setStatus, garments, setGarments }) {
+      const [focusPhoto, setFocusPhoto] = useState(null);
+
+      function reassignSuffix(garmentId, photoIdx, newSuffix) {
+        setGarments((prev) => prev.map((g) => {
+          if (g.id !== garmentId) return g;
+          const photos = g.photos.map((p, i) => {
+            if (i !== photoIdx) return p;
+            return { ...p, suffix: newSuffix, filename: `clothing_upload_${TODAY}_${g.id}_${newSuffix}.jpg` };
+          });
+          return { ...g, photos };
+        }));
+      }
+
+      function confirmGroups() {
+        setStatus((s) => ({ ...s, 1: "done" }));
+        onContinue();
+      }
+
+      return (
+        <>
+          <Topbar
+            crumb="Step 2 of 4"
+            title="Groups"
+            right={
+              <>
+                <button className="btn ghost" onClick={onBack}>← Back</button>
+                <button className="btn primary" onClick={confirmGroups}>Continue to research {Icon.arrow}</button>
+              </>
+            }
+          />
+          <div className="workspace">
+            <p className="section-sub">
+              Each card is one garment. Photos have been renamed in place and dropped into a dated subfolder. Click a suffix tag to reclassify a shot, or drag a photo between groups to fix a mis-cluster.
+            </p>
+
+            <div className="group-list">
+              {garments.map((g) => (
+                <div key={g.id} className="group-card fade-in">
+                  <div className="group-head">
+                    <div className="group-head-l">
+                      <span className="group-folder">{Icon.folder} {g.folder}/</span>
+                      <span className="group-title">{g.detected.brand} {g.detected.product}</span>
+                      {g.detected.isNWT && <span className="pill accent">NWT</span>}
+                    </div>
+                    <div className="group-head-r">
+                      <span className="pill dot">{g.photos.length} photos</span>
+                      <span className="pill dot">size {g.detected.size || "—"}</span>
+                      <button className="btn sm ghost">Regroup</button>
+                    </div>
+                  </div>
+                  <div className="group-photos">
+                    {g.photos.map((p, i) => (
+                      <div key={i} className={`gp-tile ${p.bg}`} style={p.palette ? { "--c1": p.palette.c1, "--c2": p.palette.c2 } : undefined} onClick={() => setFocusPhoto({ garment: g, photo: p, idx: i })}>
+                        <div className="cloth">{p.silhouette ? SILHOUETTES[p.silhouette] : (g.silhouette && (p.suffix === "front" || p.suffix === "back") ? SILHOUETTES[g.silhouette] : null)}</div>
+                        {p.labelText && <div className="cloth-label-text">{p.labelText.split("\n").map((l, ix) => <div key={ix}>{l}</div>)}</div>}
+                        {p.tag && <div className="cloth-tag">{p.tag}</div>}
+                        <div className="gp-suffix-tabs">
+                          {SUFFIXES.map((s) => (
+                            <button
+                              key={s}
+                              className={`gp-suffix-tab ${p.suffix === s ? "active" : ""}`}
+                              onClick={(e) => { e.stopPropagation(); reassignSuffix(g.id, i, s); }}
+                            >{s}</button>
+                          ))}
+                        </div>
+                        <div className="gp-name">{p.filename}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {focusPhoto && (
+            <div className="modal-veil" onClick={() => setFocusPhoto(null)}>
+              <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 560 }}>
+                <div className="modal-head">
+                  <div>
+                    <div className="muted" style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase" }}>{focusPhoto.garment.detected.brand}</div>
+                    <div style={{ fontFamily: "var(--font-mono)", fontSize: 13 }}>{focusPhoto.photo.filename}</div>
+                  </div>
+                  <button className="btn icon ghost" onClick={() => setFocusPhoto(null)}>{Icon.x}</button>
+                </div>
+                <div className="modal-body">
+                  <div className={`gp-tile ${focusPhoto.photo.bg}`} style={{ aspectRatio: "3/4", position: "relative", borderRadius: 10, ...(focusPhoto.photo.palette ? { "--c1": focusPhoto.photo.palette.c1, "--c2": focusPhoto.photo.palette.c2 } : {}) }}>
+                    <div className="cloth">{focusPhoto.photo.silhouette ? SILHOUETTES[focusPhoto.photo.silhouette] : (focusPhoto.garment.silhouette && (focusPhoto.photo.suffix === "front" || focusPhoto.photo.suffix === "back") ? SILHOUETTES[focusPhoto.garment.silhouette] : null)}</div>
+                    {focusPhoto.photo.labelText && <div className="cloth-label-text">{focusPhoto.photo.labelText.split("\n").map((l, ix) => <div key={ix}>{l}</div>)}</div>}
+                    {focusPhoto.photo.tag && <div className="cloth-tag">{focusPhoto.photo.tag}</div>}
+                  </div>
+                  <div style={{ marginTop: 16 }}>
+                    <label style={{ fontSize: 11, color: "var(--ink-3)", letterSpacing: "0.08em", textTransform: "uppercase" }}>Shot type</label>
+                    <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+                      {SUFFIXES.map((s) => (
+                        <button
+                          key={s}
+                          className={`btn sm ${focusPhoto.photo.suffix === s ? "primary" : ""}`}
+                          onClick={() => { reassignSuffix(focusPhoto.garment.id, focusPhoto.idx, s); setFocusPhoto({ ...focusPhoto, photo: { ...focusPhoto.photo, suffix: s } }); }}
+                        >{s}</button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      );
+    }
+
+    /* ========================= STEP 3 — RESEARCH ========================= */
+    function StepResearch({ onContinue, onBack, status, setStatus, garments, setGarments }) {
+      const [activeId, setActiveId] = useState(garments[0].id);
+      const active = garments.find((g) => g.id === activeId);
+
+      function updateDetected(field, value) {
+        setGarments((prev) => prev.map((g) => {
+          if (g.id !== activeId) return g;
+          const nextConf = { ...g.confidence };
+          delete nextConf[field];
+          return { ...g, detected: { ...g.detected, [field]: value }, confidence: nextConf };
+        }));
+      }
+
+      function regenerateDescription() {
+        const ta = document.querySelector('textarea[data-field="description"]');
+        if (ta) {
+          ta.style.transition = "background .2s ease";
+          ta.style.background = "var(--accent-soft)";
+          setTimeout(() => { ta.style.background = ""; }, 500);
+        }
+      }
+
+      function fieldClass(name) {
+        return `field ${active.confidence[name] === "low" ? "lowconf" : ""}`;
+      }
+
+      function confirmResearch() {
+        setStatus((s) => ({ ...s, 2: "done" }));
+        onContinue();
+      }
+
+      const lowConfCount = garments.reduce((n, g) => n + Object.keys(g.confidence).length, 0);
+      const heroPhoto = active.photos.find((p) => p.suffix === "front") || active.photos[0];
+
+      return (
+        <>
+          <Topbar
+            crumb="Step 3 of 4"
+            title="Research"
+            right={
+              <>
+                <button className="btn ghost" onClick={onBack}>← Back</button>
+                {lowConfCount > 0 && <span className="pill warn">{Icon.warn} {lowConfCount} fields need review</span>}
+                <button className="btn primary" onClick={confirmResearch}>Continue to export {Icon.arrow}</button>
+              </>
+            }
+          />
+          <div className="workspace">
+            <p className="section-sub">
+              For each garment, Fetch Closet ran a reverse-image search, identified the brand and product, pulled the MSRP, and benchmarked sold listings on Poshmark / Mercari / eBay to suggest a sale price. Review and edit anything before export. Low-confidence fields are highlighted.
+            </p>
+
+            <div className="research-layout">
+              <aside className="research-list">
+                <div className="research-list-head">
+                  <strong style={{ fontSize: 13 }}>Garments</strong>
+                  <span className="pill dot">{garments.length}</span>
+                </div>
+                {garments.map((g) => {
+                  const lowConf = Object.keys(g.confidence).length;
+                  const front = g.photos.find((p) => p.suffix === "front") || g.photos[0];
+                  return (
+                    <button
+                      key={g.id}
+                      className={`research-row ${activeId === g.id ? "active" : ""}`}
+                      onClick={() => setActiveId(g.id)}
+                    >
+                      <div className={`research-thumb ${front.bg}`} style={front.palette ? { "--c1": front.palette.c1, "--c2": front.palette.c2 } : undefined}>
+                        <div className="cloth" style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center" }}>
+                          {g.silhouette && <div style={{ width: "70%", height: "70%" }}>{SILHOUETTES[g.silhouette]}</div>}
+                        </div>
+                      </div>
+                      <div style={{ minWidth: 0 }}>
+                        <div className="research-row-title">{g.detected.brand} {g.detected.product}</div>
+                        <div className="research-row-meta">
+                          <span>{g.detected.sku}</span>
+                          <span>·</span>
+                          <span>${g.detected.price || "—"}</span>
+                          {lowConf > 0 && <span className="pill warn" style={{ padding: "1px 6px", fontSize: 10 }}>{lowConf}</span>}
+                        </div>
+                      </div>
+                      <div />
+                    </button>
+                  );
+                })}
+              </aside>
+
+              <section className="research-detail fade-in" key={activeId}>
+                <div className="research-detail-head">
+                  <div>
+                    <div className={`research-hero ${heroPhoto.bg}`}
+                      style={heroPhoto.palette ? { "--c1": heroPhoto.palette.c1, "--c2": heroPhoto.palette.c2 } : undefined}>
+                      <div className="cloth">{SILHOUETTES[active.silhouette]}</div>
+                      {active.detected.isNWT && <div className="cloth-tag" style={{ top: "8%", right: "10%" }}>NWT ${active.detected.msrp}</div>}
+                    </div>
+                    <div className="research-hero-strip">
+                      {active.photos.slice(0, 5).map((p, i) => (
+                        <div key={i} className={`gp-tile ${p.bg}`} style={p.palette ? { "--c1": p.palette.c1, "--c2": p.palette.c2 } : undefined}>
+                          <div className="cloth">{p.silhouette ? SILHOUETTES[p.silhouette] : (active.silhouette && (p.suffix === "front" || p.suffix === "back") ? SILHOUETTES[active.silhouette] : null)}</div>
+                          {p.labelText && <div className="cloth-label-text" style={{ fontSize: 6 }}>{p.labelText.split("\n").map((l, ix) => <div key={ix}>{l}</div>)}</div>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
+                      <span className="pill dot" style={{ fontFamily: "var(--font-mono)" }}>{active.detected.sku}</span>
+                      <span className="pill dot">{Icon.folder} {active.folder}</span>
+                      {active.detected.isNWT && <span className="pill accent">NWT</span>}
+                    </div>
+                    <h2 className="section-title" style={{ fontSize: 28, marginTop: 8 }}>{active.detected.brand}</h2>
+                    <div style={{ color: "var(--ink-2)", fontSize: 16 }}>{active.detected.product}</div>
+
+                    <div style={{ display: "flex", gap: 18, marginTop: 16, alignItems: "baseline" }}>
+                      <div>
+                        <div style={{ fontSize: 11, color: "var(--ink-3)", letterSpacing: "0.08em", textTransform: "uppercase" }}>MSRP</div>
+                        <div style={{ fontFamily: "var(--font-display)", fontSize: 26, letterSpacing: "-0.01em" }}>${active.detected.msrp || "—"}</div>
+                      </div>
+                      <div style={{ width: 1, height: 32, background: "var(--line)" }} />
+                      <div>
+                        <div style={{ fontSize: 11, color: "var(--ink-3)", letterSpacing: "0.08em", textTransform: "uppercase" }}>Recommended list</div>
+                        <div style={{ fontFamily: "var(--font-display)", fontSize: 26, letterSpacing: "-0.01em", color: active.detected.price ? "var(--accent-2)" : "var(--warn)" }}>
+                          ${active.detected.price || "needs review"}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={{ marginTop: 16, padding: 12, background: "var(--surface-tint)", borderRadius: "var(--r-md)", border: "1px solid var(--line)" }}>
+                      <div style={{ fontSize: 11, color: "var(--ink-3)", letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 6 }}>Sold comparables (last 90d)</div>
+                      <div style={{ display: "flex", gap: 12, fontSize: 12.5, fontFamily: "var(--font-mono)", flexWrap: "wrap" }}>
+                        <span>Poshmark <strong>${Math.round((active.detected.price || 30) * 1.05)}</strong></span>
+                        <span>Mercari <strong>${Math.round((active.detected.price || 30) * 0.92)}</strong></span>
+                        <span>eBay <strong>${Math.round((active.detected.price || 30) * 0.98)}</strong></span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="field-grid">
+                  <div className={fieldClass("title")}>
+                    <label>Title {active.confidence.title && <span className="pill warn" style={{ padding: "1px 6px", fontSize: 10 }}>low confidence</span>}</label>
+                    <input value={active.detected.title} onChange={(e) => updateDetected("title", e.target.value)} />
+                  </div>
+                  <div className={fieldClass("brand")}>
+                    <label>Brand</label>
+                    <input value={active.detected.brand} onChange={(e) => updateDetected("brand", e.target.value)} />
+                  </div>
+                  <div className="field full">
+                    <label>Description {Icon.spark}
+                      <button className="btn ghost sm" style={{ marginLeft: "auto", padding: "2px 8px" }} onClick={regenerateDescription}>{Icon.refresh} Regenerate</button>
+                    </label>
+                    <textarea data-field="description" value={active.detected.description} onChange={(e) => updateDetected("description", e.target.value)} />
+                    <div className="field-help">Poshmark-style. Edit freely — placeholders for measurements are intentional.</div>
+                  </div>
+
+                  <div className="field">
+                    <label>Department</label>
+                    <select value={active.detected.department} onChange={(e) => updateDetected("department", e.target.value)}>
+                      {DEPARTMENTS.map((d) => <option key={d}>{d}</option>)}
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label>Category</label>
+                    <input value={active.detected.category} onChange={(e) => updateDetected("category", e.target.value)} />
+                  </div>
+                  <div className={fieldClass("subcategory")}>
+                    <label>Sub-category {active.confidence.subcategory && <span className="pill warn" style={{ padding: "1px 6px", fontSize: 10 }}>low</span>}</label>
+                    <input value={active.detected.subcategory} onChange={(e) => updateDetected("subcategory", e.target.value)} placeholder="Optional" />
+                  </div>
+                  <div className={fieldClass("size")}>
+                    <label>Size {active.confidence.size && <span className="pill warn" style={{ padding: "1px 6px", fontSize: 10 }}>no label photo</span>}</label>
+                    <input value={active.detected.size} onChange={(e) => updateDetected("size", e.target.value)} placeholder="Read from label photo" />
+                  </div>
+
+                  <div className="field">
+                    <label>Condition</label>
+                    <select value={active.detected.condition} onChange={(e) => updateDetected("condition", e.target.value)}>
+                      {CONDITIONS.map((c) => <option key={c}>{c}</option>)}
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label>Color 1</label>
+                    <select value={active.detected.color1} onChange={(e) => updateDetected("color1", e.target.value)}>
+                      {COLORS.map((c) => <option key={c}>{c}</option>)}
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label>Color 2 <span className="muted" style={{ fontWeight: 400 }}>(optional)</span></label>
+                    <select value={active.detected.color2} onChange={(e) => updateDetected("color2", e.target.value)}>
+                      <option value="">—</option>
+                      {COLORS.map((c) => <option key={c}>{c}</option>)}
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label>Original Price (MSRP)</label>
+                    <input type="number" value={active.detected.msrp || ""} onChange={(e) => updateDetected("msrp", parseFloat(e.target.value) || 0)} />
+                  </div>
+                  <div className={fieldClass("price")}>
+                    <label>Listing Price {active.confidence.price && <span className="pill warn" style={{ padding: "1px 6px", fontSize: 10 }}>no good comps</span>}</label>
+                    <input type="number" value={active.detected.price || ""} onChange={(e) => updateDetected("price", parseFloat(e.target.value) || null)} placeholder="Set a price" />
+                  </div>
+
+                  <div className={`field full ${active.confidence.stockUrl === "low" ? "lowconf" : ""}`}>
+                    <label>Primary image URL (stock photo) {active.confidence.stockUrl && <span className="pill warn" style={{ padding: "1px 6px", fontSize: 10 }}>low confidence match</span>}
+                      <a href="#" onClick={(e) => e.preventDefault()} className="muted" style={{ marginLeft: "auto", fontSize: 11, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4 }}>{Icon.search} Re-search {Icon.external}</a>
+                    </label>
+                    <input value={active.detected.stockUrl} onChange={(e) => updateDetected("stockUrl", e.target.value)} placeholder="https://…" style={{ fontFamily: "var(--font-mono)", fontSize: 12.5 }} />
+                  </div>
+                </div>
+
+                <div className="research-detail-foot">
+                  <div className="muted" style={{ fontSize: 12 }}>
+                    {Object.keys(active.confidence).length === 0
+                      ? <span className="pill ok">{Icon.check} All fields confirmed</span>
+                      : <span className="pill warn">{Icon.warn} {Object.keys(active.confidence).length} field{Object.keys(active.confidence).length === 1 ? "" : "s"} flagged</span>}
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button className="btn sm" onClick={() => {
+                      const idx = garments.findIndex((g) => g.id === activeId);
+                      if (idx > 0) setActiveId(garments[idx - 1].id);
+                    }}>← Previous</button>
+                    <button className="btn sm primary" onClick={() => {
+                      const idx = garments.findIndex((g) => g.id === activeId);
+                      if (idx < garments.length - 1) setActiveId(garments[idx + 1].id);
+                      else confirmResearch();
+                    }}>{garments.findIndex((g) => g.id === activeId) === garments.length - 1 ? "Finish review" : "Next garment"} →</button>
+                  </div>
+                </div>
+              </section>
+            </div>
+          </div>
+        </>
+      );
+    }
+
+    /* ========================= STEP 4 — EXPORT ========================= */
+    function StepExport({ onBack, status, setStatus, garments }) {
+      const [tab, setTab] = useState("Listing Details");
+      const [exported, setExported] = useState(status[3] === "done");
+      const [toast, setToast] = useState(null);
+
+      const visibleCols = COLUMNS;
+      const rows = useMemo(() => garments.map(rowFor), [garments]);
+
+      const reviewItems = useMemo(() => {
+        const items = [];
+        garments.forEach((g) => {
+          Object.entries(g.confidence).forEach(([field, level]) => {
+            if (level === "low") items.push({ garment: g, field });
+          });
+          if (!g.detected.price) items.push({ garment: g, field: "Listing Price" });
+          if (!g.detected.size) items.push({ garment: g, field: "Size" });
+        });
+        return items;
+      }, [garments]);
+
+      const filename = `bulk_upload_${TODAY}.xlsx`;
+      const folder = `${TODAY}/`;
+
+      function exportXlsx() {
+        setExported(true);
+        setStatus((s) => ({ ...s, 3: "done" }));
+        setToast(`Saved ${filename}`);
+        setTimeout(() => setToast(null), 2400);
+      }
+
+      function isFlagField(g, colName) {
+        if (colName === "Primary image" && (!g.detected.stockUrl || g.confidence.stockUrl === "low")) return true;
+        if (colName === "Listing Price" && !g.detected.price) return true;
+        if (colName === "Size" && !g.detected.size) return true;
+        if (colName === "Sub-category" && g.confidence.subcategory === "low") return true;
+        if (colName === "Title" && g.confidence.title === "low") return true;
+        return false;
+      }
+
+      return (
+        <>
+          <Topbar
+            crumb="Step 4 of 4"
+            title="Export"
+            right={
+              <>
+                <button className="btn ghost" onClick={onBack}>← Back</button>
+                {!exported ? (
+                  <button className="btn accent" onClick={exportXlsx}>{Icon.download} Export bulk_upload.xlsx</button>
+                ) : (
+                  <button className="btn primary" onClick={exportXlsx}>{Icon.check} Exported · Download again</button>
+                )}
+              </>
+            }
+          />
+          <div className="workspace">
+            <p className="section-sub">
+              Preview of the populated workbook. The <code style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>Listing Details</code> tab gets {garments.length} new rows starting at row 3. All other tabs (taxonomy, colors, sizes, dropdown validations) are preserved exactly from the template.
+            </p>
+
+            <div className="export-grid">
+              <div className="xlsx-preview">
+                <div className="xlsx-tabs">
+                  {["Listing Details", "Dept Cat Subcat Taxonomy", "Color Mapping", "Size Taxonomy"].map((t) => (
+                    <button key={t} className={`xlsx-tab ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>{t}</button>
+                  ))}
+                </div>
+                <div className="xlsx-scroll">
+                  {tab === "Listing Details" ? (
+                    <table className="xlsx-table">
+                      <thead>
+                        <tr>
+                          <th className="row-num">#</th>
+                          {visibleCols.map((c) => <th key={c}>{c}</th>)}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr className="header-row">
+                          <td className="row-num">1</td>
+                          {visibleCols.map((c) => <td key={c}>{c}</td>)}
+                        </tr>
+                        <tr className="instruction-row">
+                          <td className="row-num">2</td>
+                          <td colSpan={visibleCols.length}>Required fields are SKU, Title, Description, Department, Category, Quantity, Size, Condition, Brand, Color1, Original Price, Listing Price, Availability, Primary image. Data begins on row 3.</td>
+                        </tr>
+                        {rows.map((r, ri) => {
+                          const g = garments[ri];
+                          return (
+                            <tr key={ri}>
+                              <td className="row-num">{ri + 3}</td>
+                              {visibleCols.map((c) => {
+                                const val = r[c];
+                                const flag = isFlagField(g, c);
+                                return (
+                                  <td key={c} className={`${flag ? "flag" : ""} ${!val ? "empty" : ""}`}
+                                    style={c === "Description" ? { maxWidth: 320, whiteSpace: "normal", overflow: "hidden", textOverflow: "ellipsis" } : c === "Primary image" ? { maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis" } : undefined}>
+                                    {c === "Description" && val ? val.split("\n")[0].slice(0, 80) + (val.length > 80 ? "…" : "") : (val || (val === 0 ? 0 : <span>—</span>))}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <div style={{ padding: 32, color: "var(--ink-3)", fontSize: 13, display: "flex", alignItems: "center", gap: 10 }}>
+                      {Icon.eye} <span>Preserved from template — not modified. {tab} tab includes the dropdown validations that power the form.</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="export-side">
+                <div className="card export-card">
+                  <h3>Save as</h3>
+                  <p className="sub">Workbook is written into a dated folder.</p>
+                  <div className="export-filename">
+                    {Icon.folder} {folder}{filename}
+                  </div>
+                  <div className="export-summary">
+                    <div className="row"><span className="lbl">Rows added</span><span className="val">{rows.length}</span></div>
+                    <div className="row"><span className="lbl">Tab modified</span><span className="val">Listing Details</span></div>
+                    <div className="row"><span className="lbl">Starts at row</span><span className="val">3</span></div>
+                    <div className="row"><span className="lbl">Validations</span><span className="val">preserved</span></div>
+                  </div>
+                  {!exported ? (
+                    <button className="btn accent" onClick={exportXlsx} style={{ width: "100%", justifyContent: "center" }}>
+                      {Icon.download} Export workbook
+                    </button>
+                  ) : (
+                    <>
+                      <button className="btn primary" onClick={exportXlsx} style={{ width: "100%", justifyContent: "center", marginBottom: 8 }}>{Icon.download} Re-download</button>
+                      <button className="btn" style={{ width: "100%", justifyContent: "center" }}>{Icon.external} Open in Excel</button>
+                    </>
+                  )}
+                </div>
+
+                <div className="card export-card">
+                  <h3 style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    Needs review
+                    <span className="pill warn">{reviewItems.length}</span>
+                  </h3>
+                  <p className="sub">Low-confidence fields and missing required values. Cells are highlighted in the preview.</p>
+                  {reviewItems.length === 0 ? (
+                    <div className="pill ok" style={{ padding: "6px 10px" }}>{Icon.check} Nothing flagged</div>
+                  ) : (
+                    <div className="review-list">
+                      {reviewItems.map((r, i) => (
+                        <div key={i} className="review-item">
+                          <span className="pill warn dot" style={{ padding: "2px 7px" }}>{r.field}</span>
+                          <span className="name">{r.garment.detected.brand}</span>
+                          <span className="why">{r.garment.detected.sku}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="card export-card" style={{ background: "var(--surface-tint)" }}>
+                  <h3 style={{ fontSize: 18 }}>SKU sequence</h3>
+                  <p className="sub" style={{ marginBottom: 10 }}>Per-brand counters are persisted across runs.</p>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, fontFamily: "var(--font-mono)", fontSize: 12 }}>
+                    {Object.entries(garments.reduce((acc, g) => {
+                      acc[g.detected.brand] = (acc[g.detected.brand] || 0) + 1;
+                      return acc;
+                    }, {})).map(([brand, n]) => (
+                      <div key={brand} style={{ display: "flex", justifyContent: "space-between" }}>
+                        <span>{brand}</span>
+                        <span className="muted">next → {brand.split(" ").map((w) => w[0].toUpperCase()).join("")}{String(n + 1).padStart(4, "0")}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <Toast msg={toast} />
+        </>
+      );
+    }
+
+    /* ========================= APP SHELL ========================= */
+    function App() {
+      const [step, setStep] = useState(0);
+      const [status, setStatus] = useState({ 0: "todo", 1: "todo", 2: "todo", 3: "todo" });
+      const [garments, setGarments] = useState(INITIAL_GARMENTS);
+
+      const go = (n) => setStep(n);
+
+      return (
+        <div className="app mood-vault density-workhorse photo-silhouette">
+          <Sidebar step={step} setStep={setStep} status={status} garments={garments} />
+          <main className="canvas">
+            {step === 0 && <StepPhotos onContinue={() => go(1)} status={status} setStatus={setStatus} garments={garments} />}
+            {step === 1 && <StepGroups onContinue={() => go(2)} onBack={() => go(0)} status={status} setStatus={setStatus} garments={garments} setGarments={setGarments} />}
+            {step === 2 && <StepResearch onContinue={() => go(3)} onBack={() => go(1)} status={status} setStatus={setStatus} garments={garments} setGarments={setGarments} />}
+            {step === 3 && <StepExport onBack={() => go(2)} status={status} setStatus={setStatus} garments={garments} />}
+          </main>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>

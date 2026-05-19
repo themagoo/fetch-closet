@@ -1,0 +1,37 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS / temp
+Thumbs.db
+desktop.ini
+
+# Node (if anyone adds tooling later)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python (if anyone adds scripts later)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Output / generated
+*.log
+dist/
+build/
+
+# Lock files for transient experiments
+*.tmp
