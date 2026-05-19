@@ -889,8 +889,60 @@
       const [phase, setPhase] = useState(initialPhase);
       const [progress, setProgress] = useState(initialPhase === "done" ? 100 : 0);
       const [clustered, setClustered] = useState(initialPhase === "done" ? garments.length : 0);
+      const [folderName, setFolderName] = useState(null);
+      const [thumbs, setThumbs] = useState([]); // [{ name, url|null }]
+      const [pickedCount, setPickedCount] = useState(0);
+      const fileInputRef = useRef(null);
 
-      const allPhotos = useMemo(() => garments.flatMap((g) => g.photos.map((p) => ({ ...p, garment: g }))), [garments]);
+      // webkitdirectory / directory are non-standard attributes; set imperatively to dodge React's prop-warning path
+      useEffect(() => {
+        if (fileInputRef.current) {
+          fileInputRef.current.setAttribute("webkitdirectory", "");
+          fileInputRef.current.setAttribute("directory", "");
+        }
+      }, []);
+
+      // Revoke object URLs when this set of thumbs is replaced or the component unmounts
+      useEffect(() => {
+        return () => { thumbs.forEach((t) => t.url && URL.revokeObjectURL(t.url)); };
+      }, [thumbs]);
+
+      const mockPhotos = useMemo(() => garments.flatMap((g) => g.photos.map((p) => ({ ...p, garment: g }))), [garments]);
+      const hasRealFolder = pickedCount > 0;
+      const totalShown = hasRealFolder ? pickedCount : TOTAL_PHOTOS;
+
+      function openPicker() {
+        if (fileInputRef.current) fileInputRef.current.click();
+      }
+
+      function handleFiles(e) {
+        const files = Array.from(e.target.files || []);
+        e.target.value = ""; // allow re-selecting the same folder later
+        if (files.length === 0) return;
+        const IMG_RE = /\.(jpe?g|png|heic|heif|webp|gif|bmp|tiff?)$/i;
+        const imgs = files.filter((f) => IMG_RE.test(f.name));
+        if (imgs.length === 0) {
+          alert("No image files found in that folder.\nSupported: .jpg, .jpeg, .png, .heic, .webp, .gif, .bmp, .tiff");
+          return;
+        }
+        // Revoke any previous URLs before creating new ones
+        thumbs.forEach((t) => t.url && URL.revokeObjectURL(t.url));
+
+        const relPath = imgs[0].webkitRelativePath || imgs[0].name;
+        const fname = relPath.includes("/") ? relPath.split("/")[0] : "Selected folder";
+
+        // Cap previewed thumbnails for memory; HEIC/HEIF don't decode in most browsers so we skip the URL
+        const RENDERABLE = /\.(jpe?g|png|webp|gif|bmp)$/i;
+        const newThumbs = imgs.slice(0, 60).map((f) => ({
+          name: f.name,
+          url: RENDERABLE.test(f.name) ? URL.createObjectURL(f) : null,
+        }));
+
+        setThumbs(newThumbs);
+        setFolderName(fname);
+        setPickedCount(imgs.length);
+        setPhase("ready");
+      }
 
       function runIngest() {
         setPhase("loading");
@@ -927,38 +979,56 @@
               phase === "done" ? (
                 <button className="btn primary" onClick={onContinue}>Review groups {Icon.arrow}</button>
               ) : phase === "idle" ? (
-                <button className="btn primary" onClick={runIngest}>{Icon.spark} Ingest & auto-group</button>
+                <button className="btn primary" onClick={openPicker}>{Icon.folder} Browse for folder</button>
+              ) : phase === "ready" ? (
+                <>
+                  <button className="btn ghost" onClick={openPicker}>{Icon.folder} Change folder</button>
+                  <button className="btn primary" onClick={runIngest}>{Icon.spark} Ingest & auto-group</button>
+                </>
               ) : (
                 <button className="btn" disabled><span className="spin" style={{display:'inline-flex'}}>{Icon.refresh}</span> Working…</button>
               )
             }
           />
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            style={{ display: "none" }}
+            onChange={handleFiles}
+          />
           <div className="workspace">
             <p className="section-sub">
-              Drop a folder of unsorted clothing photos. Fetch Closet clusters them into individual garments by visual
-              similarity, color, pattern, and EXIF timestamp — then classifies each shot as <span className="pill dot">front</span> <span className="pill dot">back</span> <span className="pill dot">label</span> <span className="pill dot">closeup</span> or <span className="pill dot">callout</span>.
+              Pick a folder of unsorted clothing photos from your computer. Fetch Closet groups them into individual garments by visual similarity, color, pattern, and EXIF timestamp — then classifies each shot as <span className="pill dot">front</span> <span className="pill dot">back</span> <span className="pill dot">label</span> <span className="pill dot">closeup</span> or <span className="pill dot">callout</span>. <span className="muted">Prototype: this build shows real thumbnails from your folder, but Steps 2–4 still use sample garment data.</span>
             </p>
 
             <div className="ingest-grid">
               <section>
                 <div className="card" style={{ padding: 20 }}>
-                  <div className="dropzone" onClick={phase === "idle" ? runIngest : undefined}>
+                  <div className="dropzone" onClick={(phase === "idle" || phase === "ready") ? openPicker : undefined}>
                     <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
-                      <div className="pill dot">{Icon.folder}<span>~/Closet/Summer-Drop-1</span></div>
+                      <div className="pill dot">{Icon.folder}<span>{folderName ? folderName : "~/Closet/Summer-Drop-1"}</span></div>
                     </div>
-                    <div className="big">{phase === "idle" ? "Drop a folder of photos" : phase === "loading" ? "Reading photos…" : phase === "clustering" ? "Clustering by garment…" : "Ingestion complete"}</div>
+                    <div className="big">
+                      {phase === "idle" && "Pick a folder of photos"}
+                      {phase === "ready" && `${pickedCount} photos selected`}
+                      {phase === "loading" && "Reading photos…"}
+                      {phase === "clustering" && "Clustering by garment…"}
+                      {phase === "done" && "Ingestion complete"}
+                    </div>
                     <div className="small">
-                      {phase === "idle" && <>or click to browse · accepts <span className="kbd">.jpg</span> <span className="kbd">.png</span> <span className="kbd">.heic</span></>}
+                      {phase === "idle" && <>click to browse · accepts <span className="kbd">.jpg</span> <span className="kbd">.png</span> <span className="kbd">.heic</span></>}
+                      {phase === "ready" && <>from <strong>{folderName}</strong> · click to pick a different folder</>}
                       {phase === "loading" && <>Decoding EXIF, building visual fingerprints</>}
                       {phase === "clustering" && <>Grouping by garment, classifying shot types</>}
-                      {phase === "done" && <>{TOTAL_PHOTOS} photos · {garments.length} unique garments</>}
+                      {phase === "done" && <>{totalShown} photos · {garments.length} unique garments</>}
                     </div>
                   </div>
 
                   {(phase === "loading" || phase === "clustering" || phase === "done") && (
                     <div className="cluster-progress" style={{ marginTop: 14 }}>
                       <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--ink-3)" }}>
-                        {phase === "loading" ? `Reading ${Math.min(TOTAL_PHOTOS, Math.round(TOTAL_PHOTOS * progress / 100))} / ${TOTAL_PHOTOS}` : `Clustered ${clustered} / ${garments.length} garments`}
+                        {phase === "loading" ? `Reading ${Math.min(totalShown, Math.round(totalShown * progress / 100))} / ${totalShown}` : `Clustered ${clustered} / ${garments.length} garments`}
                       </div>
                       <div className="bar">
                         <div style={{ width: phase === "loading" ? `${progress}%` : `${(clustered / garments.length) * 100}%` }} />
@@ -968,7 +1038,7 @@
                   )}
 
                   <div className="stat-row">
-                    <div className="stat"><div className="num tabular">{TOTAL_PHOTOS}</div><div className="lbl">Photos</div></div>
+                    <div className="stat"><div className="num tabular">{(phase === "ready" || phase === "loading" || phase === "clustering" || phase === "done") ? totalShown : "—"}</div><div className="lbl">Photos</div></div>
                     <div className="stat"><div className="num tabular">{phase === "done" ? garments.length : (phase === "clustering" ? clustered : "—")}</div><div className="lbl">Garments</div></div>
                     <div className="stat"><div className="num tabular">{phase === "done" ? garments.filter((g) => g.detected.isNWT).length : "—"}</div><div className="lbl">NWT detected</div></div>
                     <div className="stat"><div className="num tabular">{phase === "done" ? Object.keys(garments.reduce((a, g) => ({ ...a, [g.detected.brand]: 1 }), {})).length : "—"}</div><div className="lbl">Brands</div></div>
@@ -980,21 +1050,42 @@
                 <div className="card" style={{ padding: 18 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                     <h3 className="section-title" style={{ fontSize: 18 }}>Source photos</h3>
-                    <span className="pill dot">{TOTAL_PHOTOS} files</span>
+                    <span className="pill dot">{hasRealFolder ? `${pickedCount} files` : `${TOTAL_PHOTOS} sample files`}</span>
                   </div>
-                  <p className="section-sub" style={{ marginBottom: 12 }}>Raw, un-renamed. Click a tile to preview.</p>
+                  <p className="section-sub" style={{ marginBottom: 12 }}>
+                    {hasRealFolder
+                      ? <>Real photos from <strong>{folderName}</strong>{thumbs.length < pickedCount && <> · preview limited to first {thumbs.length}</>}.</>
+                      : "Sample tiles — pick a folder above to see your own photos here."}
+                  </p>
                   <div className="photo-tray">
-                    {allPhotos.map((p, i) => (
-                      <div key={i} className={`photo-tile ${p.bg} fade-in`} style={p.palette ? { "--c1": p.palette.c1, "--c2": p.palette.c2 } : undefined}>
-                        <div className="cloth">{p.silhouette ? SILHOUETTES[p.silhouette] : (p.garment.silhouette && (p.suffix === "front" || p.suffix === "back") ? SILHOUETTES[p.garment.silhouette] : null)}</div>
-                        {p.labelText && <div className="cloth-label-text">{p.labelText.split("\n").map((l, ix) => <div key={ix}>{l}</div>)}</div>}
-                        {p.tag && <div className="cloth-tag">{p.tag}</div>}
-                        <div className="ph-label">IMG_{1000 + i}</div>
-                        {phase === "done" && (
-                          <div className={`ph-suffix ${p.suffix === "front" ? "front" : ""}`}>{p.suffix}</div>
-                        )}
-                      </div>
-                    ))}
+                    {hasRealFolder ? (
+                      thumbs.map((t, i) => (
+                        <div key={i} className="photo-tile fade-in" style={{ background: t.url ? "#000" : "var(--bg-2)" }}>
+                          {t.url ? (
+                            <img src={t.url} alt={t.name} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                          ) : (
+                            <div className="cloth-label-text" style={{ fontSize: 8 }}>HEIC<br/>not previewable</div>
+                          )}
+                          <div className="ph-label">{t.name.length > 14 ? t.name.slice(0,12) + "…" : t.name}</div>
+                          {phase === "done" && (() => {
+                            const suf = ["front","back","label","closeup","callout"][i % 5];
+                            return <div className={`ph-suffix ${suf === "front" ? "front" : ""}`}>{suf}</div>;
+                          })()}
+                        </div>
+                      ))
+                    ) : (
+                      mockPhotos.map((p, i) => (
+                        <div key={i} className={`photo-tile ${p.bg} fade-in`} style={p.palette ? { "--c1": p.palette.c1, "--c2": p.palette.c2 } : undefined}>
+                          <div className="cloth">{p.silhouette ? SILHOUETTES[p.silhouette] : (p.garment.silhouette && (p.suffix === "front" || p.suffix === "back") ? SILHOUETTES[p.garment.silhouette] : null)}</div>
+                          {p.labelText && <div className="cloth-label-text">{p.labelText.split("\n").map((l, ix) => <div key={ix}>{l}</div>)}</div>}
+                          {p.tag && <div className="cloth-tag">{p.tag}</div>}
+                          <div className="ph-label">IMG_{1000 + i}</div>
+                          {phase === "done" && (
+                            <div className={`ph-suffix ${p.suffix === "front" ? "front" : ""}`}>{p.suffix}</div>
+                          )}
+                        </div>
+                      ))
+                    )}
                   </div>
                 </div>
               </section>
