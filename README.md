@@ -4,12 +4,11 @@ A single-file web app that turns a folder of unsorted clothing photos into a rea
 
 ## What it does
 
-Walks the user through four steps:
+Walks the user through three steps:
 
-1. **Photos.** Drop a folder of raw clothing photos. The app clusters them into individual garments by visual similarity, color, pattern, and EXIF timestamp, then classifies each shot as `front`, `back`, `label`, `closeup`, or `callout`.
-2. **Groups.** Review each garment as a card with renamed filenames in the `clothing_upload_<YYYYMMDD>_<###>_<suffix>.jpg` format. Reassign shot types or regroup mis-clustered photos.
-3. **Research.** For each garment, the app runs reverse-image search, identifies brand/product, pulls the MSRP, benchmarks sold listings on Poshmark / Mercari / eBay, and drafts a Poshmark-style description with measurement placeholders and hashtags. Edit anything inline; low-confidence fields are highlighted.
-4. **Export.** Live preview of the populated `Listing Details` tab from the Poshmark bulk upload template — rows start at row 3, all required fields populated, and the template's hidden taxonomy/color/size dropdown tabs are preserved untouched. Save as `<YYYYMMDD>/bulk_upload_<YYYYMMDD>.xlsx`.
+1. **Photos.** Pick a folder of clothing photos from your computer. **MVP model: one photo per garment, no clustering.** Each photo is renamed into the `clothing_upload_<YYYYMMDD>_<###>_front.<ext>` format and dropped into a dated subfolder.
+2. **Research.** For each garment, the app would run reverse-image search, identify brand/product, pull the MSRP, benchmark sold listings on Poshmark / Mercari / eBay, and draft a Poshmark-style description with measurement placeholders and hashtags. In this prototype the research is mocked — fields start empty and flagged, ready for manual entry. Editing a field clears its flag.
+3. **Export.** Live preview of the populated `Listing Details` tab from the Poshmark bulk upload template — rows start at row 3, all required fields populated, and the template's hidden taxonomy/color/size dropdown tabs are preserved untouched. Save as `<YYYYMMDD>/bulk_upload_<YYYYMMDD>.xlsx`.
 
 ## Running it
 

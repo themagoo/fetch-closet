@@ -824,12 +824,11 @@
     };
 
     /* ========================= LAYOUT ========================= */
-    function Sidebar({ step, setStep, status, garments }) {
+    function Sidebar({ step, setStep, status, garments, apiKey, setApiKey }) {
       const steps = [
-        { id: 0, label: "Photos", sub: "Ingest & cluster" },
-        { id: 1, label: "Groups", sub: "Review garments" },
-        { id: 2, label: "Research", sub: "Listing details" },
-        { id: 3, label: "Export", sub: "Bulk upload" },
+        { id: 0, label: "Photos", sub: "Ingest folder" },
+        { id: 1, label: "Research", sub: "Listing details" },
+        { id: 2, label: "Export", sub: "Bulk upload" },
       ];
       return (
         <aside className="sidebar">
@@ -857,10 +856,18 @@
             ))}
           </nav>
           <div className="sidebar-meta">
-            <div className="row"><span>Source folder</span><span className="tabular">~/Closet</span></div>
             <div className="row"><span>Date stamp</span><span className="tabular">{TODAY}</span></div>
-            <div className="row"><span>Photos found</span><span className="tabular">{TOTAL_PHOTOS}</span></div>
             <div className="row"><span>Garments</span><span className="tabular">{garments.length}</span></div>
+            <div className="row" style={{ alignItems: "center", marginTop: 6 }}>
+              <span>Anthropic key</span>
+              {apiKey ? (
+                <button className="btn ghost sm" onClick={() => { if (confirm("Clear the stored Anthropic API key?")) setApiKey(""); }} title="Click to clear" style={{ padding: "2px 8px" }}>
+                  ••••{apiKey.slice(-4)}
+                </button>
+              ) : (
+                <span className="pill warn dot" style={{ padding: "2px 7px", fontSize: 10 }}>not set</span>
+              )}
+            </div>
           </div>
         </aside>
       );
@@ -884,124 +891,22 @@
     }
 
     /* ========================= STEP 1 — PHOTOS ========================= */
-    // Compute an average-color signature for one image. Resolves with
-    // { r, g, b, ok } — ok=false when the image can't be decoded (HEIC, etc.)
-    function computeColorSignature(url) {
-      return new Promise((resolve) => {
-        if (!url) { resolve({ ok: false }); return; }
-        const img = new Image();
-        img.crossOrigin = "anonymous";
-        const cleanup = () => { img.onload = null; img.onerror = null; };
-        img.onload = () => {
-          try {
-            const W = 32, H = 32;
-            const canvas = document.createElement("canvas");
-            canvas.width = W; canvas.height = H;
-            const ctx = canvas.getContext("2d");
-            ctx.drawImage(img, 0, 0, W, H);
-            const data = ctx.getImageData(0, 0, W, H).data;
-            let r = 0, g = 0, b = 0, n = 0;
-            for (let i = 0; i < data.length; i += 4) { r += data[i]; g += data[i+1]; b += data[i+2]; n++; }
-            cleanup();
-            resolve({ r: r/n, g: g/n, b: b/n, ok: true });
-          } catch (e) {
-            cleanup();
-            resolve({ ok: false });
-          }
-        };
-        img.onerror = () => { cleanup(); resolve({ ok: false }); };
-        img.src = url;
-      });
-    }
-
-    // Sequentially enrich each picked photo with a color signature.
-    // Sequential (not parallel) so we can report progress and avoid memory spikes on big folders.
-    async function enrichWithSignatures(photos, onProgress) {
+    // MVP model: one photo = one garment. No clustering.
+    // Photos are sorted by lastModified ascending so the garment numbers reflect shoot order.
+    function buildRealGarments(pickedPhotos, folderLabel) {
       const out = [];
-      for (let i = 0; i < photos.length; i++) {
-        const sig = await computeColorSignature(photos[i].url);
-        out.push({ ...photos[i], sig });
-        if (onProgress) onProgress(i + 1, photos.length);
-      }
-      return out;
-    }
-
-    // Group helpers — operate on a chronologically-sorted array of picked photos.
-    function chunkByFixed(photos, n) {
-      const out = [];
-      for (let i = 0; i < photos.length; i += n) out.push(photos.slice(i, i + n));
-      return out;
-    }
-
-    function chunkByTimeGap(photos, gapMs) {
-      const out = [];
-      let current = [];
-      for (let i = 0; i < photos.length; i++) {
-        if (current.length === 0) { current.push(photos[i]); continue; }
-        const prev = current[current.length - 1];
-        const dt = (photos[i].lastModified || 0) - (prev.lastModified || 0);
-        if (dt > gapMs) {
-          out.push(current);
-          current = [photos[i]];
-        } else {
-          current.push(photos[i]);
-        }
-      }
-      if (current.length > 0) out.push(current);
-      return out;
-    }
-
-    // Combined: split when (a) color jump is large, or (b) color jump is moderate AND time gap is large.
-    // Falls back to time-only when either side lacks a usable color signature (e.g. HEIC).
-    function chunkByVisualAndGap(photos, opts) {
-      const { gapMs, colorThreshold } = opts;
-      const out = [];
-      let current = [];
-      for (let i = 0; i < photos.length; i++) {
-        const p = photos[i];
-        if (current.length === 0) { current.push(p); continue; }
-        const prev = current[current.length - 1];
-        const timeGap = (p.lastModified || 0) - (prev.lastModified || 0);
-
-        let split = false;
-        if (p.sig && p.sig.ok && prev.sig && prev.sig.ok) {
-          const dr = p.sig.r - prev.sig.r;
-          const dg = p.sig.g - prev.sig.g;
-          const db = p.sig.b - prev.sig.b;
-          const colorDist = Math.sqrt(dr*dr + dg*dg + db*db);
-          // Decisive color jump → new garment. Moderate jump + big time gap → also new garment.
-          split = colorDist > colorThreshold || (colorDist > colorThreshold * 0.5 && timeGap > gapMs);
-        } else {
-          split = timeGap > gapMs;
-        }
-
-        if (split) { out.push(current); current = [p]; }
-        else { current.push(p); }
-      }
-      if (current.length > 0) out.push(current);
-      return out;
-    }
-
-    // Build a real garments array from pre-chunked photo arrays.
-    // Suffixes rotate: front, back, label, closeup, callout. First photo of each chunk = front.
-    function buildRealGarments(chunks, folderLabel) {
-      const out = [];
-      const SUF_CYCLE = ["front", "back", "label", "closeup", "callout"];
-      chunks.forEach((slice) => {
+      pickedPhotos.forEach((p) => {
         const id = String(out.length + 1).padStart(3, "0");
-        const photos = slice.map((p, pi) => {
-          const suffix = SUF_CYCLE[Math.min(pi, SUF_CYCLE.length - 1)];
-          const ext = (p.name.split(".").pop() || "jpg").toLowerCase();
-          return {
-            suffix,
-            bg: "bg-closeup",
-            silhouette: null,
-            palette: null,
-            url: p.url,
-            originalName: p.name,
-            filename: `clothing_upload_${TODAY}_${id}_${suffix}.${ext}`,
-          };
-        });
+        const ext = (p.name.split(".").pop() || "jpg").toLowerCase();
+        const photo = {
+          suffix: "front",
+          bg: "bg-closeup",
+          silhouette: null,
+          palette: null,
+          url: p.url,
+          originalName: p.name,
+          filename: `clothing_upload_${TODAY}_${id}_front.${ext}`,
+        };
         out.push({
           id,
           folder: `clothing_upload_${TODAY}_${id}`,
@@ -1031,7 +936,7 @@
           },
           silhouette: null,
           palette: null,
-          photos,
+          photos: [photo],
         });
       });
       return out;
@@ -1046,11 +951,6 @@
       const [thumbs, setThumbs] = useState([]); // [{ name, url|null }]
       const [pickedPhotos, setPickedPhotos] = useState([]); // ALL picked photos with URLs (not capped)
       const [pickedCount, setPickedCount] = useState(0);
-      const [groupMode, setGroupMode] = useState("visual"); // "visual" | "gap" | "fixed"
-      const [photosPerGarment, setPhotosPerGarment] = useState(4);
-      const [gapSeconds, setGapSeconds] = useState(30);
-      const [colorThreshold, setColorThreshold] = useState(50);
-      const [sigStatus, setSigStatus] = useState(null); // { done, total } during analysis, null otherwise
       const fileInputRef = useRef(null);
 
       // After ingestion, detect whether the garments state holds the real picked set
@@ -1120,147 +1020,55 @@
         setPhase("ready");
       }
 
-      async function runIngest() {
+      function runIngest() {
         setPhase("loading");
         setProgress(0);
 
-        let realGarments = null;
-        if (pickedPhotos.length > 0) {
-          let chunks;
-          if (groupMode === "visual") {
-            // Compute color signatures with real progress feedback, then chunk by combined signal
-            setSigStatus({ done: 0, total: pickedPhotos.length });
-            const enriched = await enrichWithSignatures(pickedPhotos, (done, total) => {
-              setSigStatus({ done, total });
-              setProgress((done / total) * 100);
-            });
-            setSigStatus(null);
-            chunks = chunkByVisualAndGap(enriched, {
-              gapMs: Math.max(1, parseInt(gapSeconds, 10) || 30) * 1000,
-              colorThreshold: Math.max(1, parseFloat(colorThreshold) || 50),
-            });
-            realGarments = buildRealGarments(chunks, folderName);
-            setProgress(100);
-            setPhase("clustering");
-          } else {
-            chunks = groupMode === "gap"
-              ? chunkByTimeGap(pickedPhotos, Math.max(1, parseInt(gapSeconds, 10) || 15) * 1000)
-              : chunkByFixed(pickedPhotos, Math.max(1, parseInt(photosPerGarment, 10) || 4));
-            realGarments = buildRealGarments(chunks, folderName);
-            // Fall back to the original cosmetic loading animation when no per-photo analysis is needed
-            await new Promise((resolve) => {
-              let pct = 0;
-              const tick = setInterval(() => {
-                pct += 7 + Math.random() * 12;
-                if (pct >= 100) { clearInterval(tick); setProgress(100); setPhase("clustering"); resolve(); }
-                else setProgress(pct);
-              }, 120);
-            });
-          }
-        } else {
-          // No real folder — run the cosmetic loading animation against mock data
-          await new Promise((resolve) => {
-            let pct = 0;
-            const tick = setInterval(() => {
-              pct += 7 + Math.random() * 12;
-              if (pct >= 100) { clearInterval(tick); setProgress(100); setPhase("clustering"); resolve(); }
-              else setProgress(pct);
-            }, 120);
-          });
-        }
-
-        if (realGarments) setGarments(realGarments);
+        const realGarments = pickedPhotos.length > 0
+          ? buildRealGarments(pickedPhotos, folderName)
+          : null;
         const targetCount = realGarments ? realGarments.length : garments.length;
 
-        // Per-garment reveal animation
-        let g = 0;
-        const tick2 = setInterval(() => {
-          g += 1;
-          setClustered(g);
-          if (g >= targetCount) {
-            clearInterval(tick2);
-            setPhase("done");
-            setStatus((s) => ({ ...s, 0: "done" }));
+        // Short cosmetic load animation, then reveal the garments and finish.
+        let pct = 0;
+        const tick = setInterval(() => {
+          pct += 10 + Math.random() * 15;
+          if (pct >= 100) {
+            clearInterval(tick);
+            setProgress(100);
+            setPhase("clustering");
+            if (realGarments) setGarments(realGarments);
+            let g = 0;
+            const tick2 = setInterval(() => {
+              g += 1;
+              setClustered(g);
+              if (g >= targetCount) {
+                clearInterval(tick2);
+                setPhase("done");
+                setStatus((s) => ({ ...s, 0: "done" }));
+              }
+            }, Math.max(40, 800 / Math.max(1, targetCount)));
+          } else {
+            setProgress(pct);
           }
-        }, 220);
+        }, 120);
       }
 
       return (
         <>
           <Topbar
-            crumb="Step 1 of 4"
+            crumb="Step 1 of 3"
             title="Photos"
             right={
               phase === "done" ? (
-                <button className="btn primary" onClick={onContinue}>Review groups {Icon.arrow}</button>
+                <button className="btn primary" onClick={onContinue}>Continue to research {Icon.arrow}</button>
               ) : phase === "idle" ? (
                 <button className="btn primary" onClick={openPicker}>{Icon.folder} Browse for folder</button>
               ) : phase === "ready" ? (
                 <>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, padding: 2, border: "1px solid var(--line-2)", borderRadius: 999, background: "var(--surface)" }}>
-                    <button
-                      className={`btn sm ${groupMode === "visual" ? "primary" : "ghost"}`}
-                      onClick={() => setGroupMode("visual")}
-                      title="Detect garment boundaries by combining visual color similarity with time-gap fallback"
-                    >Visual + time</button>
-                    <button
-                      className={`btn sm ${groupMode === "gap" ? "primary" : "ghost"}`}
-                      onClick={() => setGroupMode("gap")}
-                      title="Detect garment boundaries by time gap between photos"
-                    >Time gap</button>
-                    <button
-                      className={`btn sm ${groupMode === "fixed" ? "primary" : "ghost"}`}
-                      onClick={() => setGroupMode("fixed")}
-                      title="Chunk photos into fixed-size groups"
-                    >Fixed N</button>
-                  </div>
-                  {groupMode === "visual" && (
-                    <>
-                      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--ink-3)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-                        Color threshold
-                        <input
-                          type="number" min="10" max="200" step="5"
-                          value={colorThreshold}
-                          onChange={(e) => setColorThreshold(e.target.value)}
-                          title="Lower = more sensitive (more groups). 30–60 is a good range."
-                          style={{ width: 64, padding: "4px 6px", border: "1px solid var(--line-2)", borderRadius: 6, fontFamily: "var(--font-mono)", fontSize: 12, textAlign: "center" }}
-                        />
-                      </label>
-                      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--ink-3)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-                        Gap (sec)
-                        <input
-                          type="number" min="1" max="3600" step="1"
-                          value={gapSeconds}
-                          onChange={(e) => setGapSeconds(e.target.value)}
-                          style={{ width: 64, padding: "4px 6px", border: "1px solid var(--line-2)", borderRadius: 6, fontFamily: "var(--font-mono)", fontSize: 12, textAlign: "center" }}
-                        />
-                      </label>
-                    </>
-                  )}
-                  {groupMode === "gap" && (
-                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--ink-3)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-                      Gap (sec)
-                      <input
-                        type="number" min="1" max="3600" step="1"
-                        value={gapSeconds}
-                        onChange={(e) => setGapSeconds(e.target.value)}
-                        style={{ width: 64, padding: "4px 6px", border: "1px solid var(--line-2)", borderRadius: 6, fontFamily: "var(--font-mono)", fontSize: 12, textAlign: "center" }}
-                      />
-                    </label>
-                  )}
-                  {groupMode === "fixed" && (
-                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--ink-3)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-                      Photos / garment
-                      <input
-                        type="number" min="1" max="20" step="1"
-                        value={photosPerGarment}
-                        onChange={(e) => setPhotosPerGarment(e.target.value)}
-                        style={{ width: 56, padding: "4px 6px", border: "1px solid var(--line-2)", borderRadius: 6, fontFamily: "var(--font-mono)", fontSize: 12, textAlign: "center" }}
-                      />
-                    </label>
-                  )}
+                  <span className="pill dot">1 photo = 1 garment</span>
                   <button className="btn ghost" onClick={openPicker}>{Icon.folder} Change folder</button>
-                  <button className="btn primary" onClick={runIngest}>{Icon.spark} Ingest & auto-group</button>
+                  <button className="btn primary" onClick={runIngest}>{Icon.spark} Ingest photos</button>
                 </>
               ) : (
                 <button className="btn" disabled><span className="spin" style={{display:'inline-flex'}}>{Icon.refresh}</span> Working…</button>
@@ -1276,7 +1084,7 @@
           />
           <div className="workspace">
             <p className="section-sub">
-              Pick a folder of unsorted clothing photos from your computer. Fetch Closet groups them into individual garments by visual similarity, color, pattern, and EXIF timestamp — then classifies each shot as <span className="pill dot">front</span> <span className="pill dot">back</span> <span className="pill dot">label</span> <span className="pill dot">closeup</span> or <span className="pill dot">callout</span>. <span className="muted">Prototype: this build shows real thumbnails from your folder, but Steps 2–4 still use sample garment data.</span>
+              Pick a folder of clothing photos from your computer. Each photo becomes one garment — Fetch Closet renames it into the <span className="kbd">clothing_upload_&lt;date&gt;_&lt;###&gt;_front</span> format and drops it into a dated subfolder. When you're done, the app jumps straight to listing research.
             </p>
 
             <div className="ingest-grid">
@@ -1290,28 +1098,22 @@
                       {phase === "idle" && "Pick a folder of photos"}
                       {phase === "ready" && `${pickedCount} photos selected`}
                       {phase === "loading" && "Reading photos…"}
-                      {phase === "clustering" && "Clustering by garment…"}
+                      {phase === "clustering" && "Renaming photos…"}
                       {phase === "done" && "Ingestion complete"}
                     </div>
                     <div className="small">
                       {phase === "idle" && <>click to browse · accepts <span className="kbd">.jpg</span> <span className="kbd">.png</span> <span className="kbd">.heic</span></>}
-                      {phase === "ready" && <>from <strong>{folderName}</strong> · {
-                        groupMode === "visual" ? `auto-detect garments by color similarity (threshold ${colorThreshold}) + ${gapSeconds}s time gap`
-                          : groupMode === "gap" ? `auto-detect garments when shots are >${gapSeconds}s apart`
-                          : `chunk every ${photosPerGarment} photos into a garment`
-                      } · click to pick a different folder</>}
-                      {phase === "loading" && (
-                        sigStatus ? <>Analyzing color signatures · {sigStatus.done} / {sigStatus.total}</> : <>Decoding EXIF, building visual fingerprints</>
-                      )}
-                      {phase === "clustering" && <>Grouping by garment, classifying shot types</>}
-                      {phase === "done" && <>{totalShown} photos · {garments.length} unique garments</>}
+                      {phase === "ready" && <>from <strong>{folderName}</strong> · each photo becomes one garment · click to pick a different folder</>}
+                      {phase === "loading" && <>Building garments from your photos</>}
+                      {phase === "clustering" && <>Renaming each photo into <span className="kbd">clothing_upload_&lt;date&gt;_&lt;###&gt;_front</span></>}
+                      {phase === "done" && <>{totalShown} photos · {garments.length} garments</>}
                     </div>
                   </div>
 
                   {(phase === "loading" || phase === "clustering" || phase === "done") && (
                     <div className="cluster-progress" style={{ marginTop: 14 }}>
                       <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--ink-3)" }}>
-                        {phase === "loading" ? `Reading ${Math.min(totalShown, Math.round(totalShown * progress / 100))} / ${totalShown}` : `Clustered ${clustered} / ${garments.length} garments`}
+                        {phase === "loading" ? `Reading ${Math.min(totalShown, Math.round(totalShown * progress / 100))} / ${totalShown}` : `Renamed ${clustered} / ${garments.length} garments`}
                       </div>
                       <div className="bar">
                         <div style={{ width: phase === "loading" ? `${progress}%` : `${(clustered / garments.length) * 100}%` }} />
@@ -1323,8 +1125,8 @@
                   <div className="stat-row">
                     <div className="stat"><div className="num tabular">{(phase === "ready" || phase === "loading" || phase === "clustering" || phase === "done") ? totalShown : "—"}</div><div className="lbl">Photos</div></div>
                     <div className="stat"><div className="num tabular">{phase === "done" ? garments.length : (phase === "clustering" ? clustered : "—")}</div><div className="lbl">Garments</div></div>
-                    <div className="stat"><div className="num tabular">{phase === "done" ? garments.filter((g) => g.detected.isNWT).length : "—"}</div><div className="lbl">NWT detected</div></div>
-                    <div className="stat"><div className="num tabular">{phase === "done" ? Object.keys(garments.reduce((a, g) => ({ ...a, [g.detected.brand]: 1 }), {})).length : "—"}</div><div className="lbl">Brands</div></div>
+                    <div className="stat"><div className="num tabular">{phase === "done" ? folderName || "—" : "—"}</div><div className="lbl">Folder</div></div>
+                    <div className="stat"><div className="num tabular" style={{ fontSize: 18 }}>{phase === "done" ? TODAY : "—"}</div><div className="lbl">Date stamp</div></div>
                   </div>
                 </div>
               </section>
@@ -1377,151 +1179,246 @@
       );
     }
 
-    /* ========================= STEP 2 — GROUPS ========================= */
-    function StepGroups({ onContinue, onBack, status, setStatus, garments, setGarments }) {
-      const [focusPhoto, setFocusPhoto] = useState(null);
-
-      function reassignSuffix(garmentId, photoIdx, newSuffix) {
-        setGarments((prev) => prev.map((g) => {
-          if (g.id !== garmentId) return g;
-          const photos = g.photos.map((p, i) => {
-            if (i !== photoIdx) return p;
-            return { ...p, suffix: newSuffix, filename: `clothing_upload_${TODAY}_${g.id}_${newSuffix}.jpg` };
-          });
-          return { ...g, photos };
-        }));
-      }
-
-      function confirmGroups() {
-        setStatus((s) => ({ ...s, 1: "done" }));
-        onContinue();
-      }
-
-      return (
-        <>
-          <Topbar
-            crumb="Step 2 of 4"
-            title="Groups"
-            right={
-              <>
-                <button className="btn ghost" onClick={onBack}>← Back</button>
-                <button className="btn primary" onClick={confirmGroups}>Continue to research {Icon.arrow}</button>
-              </>
-            }
-          />
-          <div className="workspace">
-            <p className="section-sub">
-              Each card is one garment. Photos have been renamed in place and dropped into a dated subfolder. Click a suffix tag to reclassify a shot, or drag a photo between groups to fix a mis-cluster.
-            </p>
-
-            <div className="group-list">
-              {garments.map((g) => (
-                <div key={g.id} className="group-card fade-in">
-                  <div className="group-head">
-                    <div className="group-head-l">
-                      <span className="group-folder">{Icon.folder} {g.folder}/</span>
-                      <span className="group-title">{g.detected.brand} {g.detected.product}</span>
-                      {g.detected.isNWT && <span className="pill accent">NWT</span>}
-                    </div>
-                    <div className="group-head-r">
-                      <span className="pill dot">{g.photos.length} photos</span>
-                      <span className="pill dot">size {g.detected.size || "—"}</span>
-                      <button className="btn sm ghost">Regroup</button>
-                    </div>
-                  </div>
-                  <div className="group-photos">
-                    {g.photos.map((p, i) => (
-                      <div key={i} className={`gp-tile ${p.bg}`} style={p.palette ? { "--c1": p.palette.c1, "--c2": p.palette.c2 } : undefined} onClick={() => setFocusPhoto({ garment: g, photo: p, idx: i })}>
-                        {p.url ? (
-                          <img src={p.url} alt={p.filename} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
-                        ) : (
-                          <>
-                            <div className="cloth">{p.silhouette ? SILHOUETTES[p.silhouette] : (g.silhouette && (p.suffix === "front" || p.suffix === "back") ? SILHOUETTES[g.silhouette] : null)}</div>
-                            {p.labelText && <div className="cloth-label-text">{p.labelText.split("\n").map((l, ix) => <div key={ix}>{l}</div>)}</div>}
-                            {p.tag && <div className="cloth-tag">{p.tag}</div>}
-                          </>
-                        )}
-                        <div className="gp-suffix-tabs">
-                          {SUFFIXES.map((s) => (
-                            <button
-                              key={s}
-                              className={`gp-suffix-tab ${p.suffix === s ? "active" : ""}`}
-                              onClick={(e) => { e.stopPropagation(); reassignSuffix(g.id, i, s); }}
-                            >{s}</button>
-                          ))}
-                        </div>
-                        <div className="gp-name">{p.filename}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {focusPhoto && (
-            <div className="modal-veil" onClick={() => setFocusPhoto(null)}>
-              <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 560 }}>
-                <div className="modal-head">
-                  <div>
-                    <div className="muted" style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase" }}>{focusPhoto.garment.detected.brand}</div>
-                    <div style={{ fontFamily: "var(--font-mono)", fontSize: 13 }}>{focusPhoto.photo.filename}</div>
-                  </div>
-                  <button className="btn icon ghost" onClick={() => setFocusPhoto(null)}>{Icon.x}</button>
-                </div>
-                <div className="modal-body">
-                  <div className={`gp-tile ${focusPhoto.photo.bg}`} style={{ aspectRatio: "3/4", position: "relative", borderRadius: 10, ...(focusPhoto.photo.palette ? { "--c1": focusPhoto.photo.palette.c1, "--c2": focusPhoto.photo.palette.c2 } : {}) }}>
-                    {focusPhoto.photo.url ? (
-                      <img src={focusPhoto.photo.url} alt={focusPhoto.photo.filename} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", borderRadius: 10 }} />
-                    ) : (
-                      <>
-                        <div className="cloth">{focusPhoto.photo.silhouette ? SILHOUETTES[focusPhoto.photo.silhouette] : (focusPhoto.garment.silhouette && (focusPhoto.photo.suffix === "front" || focusPhoto.photo.suffix === "back") ? SILHOUETTES[focusPhoto.garment.silhouette] : null)}</div>
-                        {focusPhoto.photo.labelText && <div className="cloth-label-text">{focusPhoto.photo.labelText.split("\n").map((l, ix) => <div key={ix}>{l}</div>)}</div>}
-                        {focusPhoto.photo.tag && <div className="cloth-tag">{focusPhoto.photo.tag}</div>}
-                      </>
-                    )}
-                  </div>
-                  <div style={{ marginTop: 16 }}>
-                    <label style={{ fontSize: 11, color: "var(--ink-3)", letterSpacing: "0.08em", textTransform: "uppercase" }}>Shot type</label>
-                    <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-                      {SUFFIXES.map((s) => (
-                        <button
-                          key={s}
-                          className={`btn sm ${focusPhoto.photo.suffix === s ? "primary" : ""}`}
-                          onClick={() => { reassignSuffix(focusPhoto.garment.id, focusPhoto.idx, s); setFocusPhoto({ ...focusPhoto, photo: { ...focusPhoto.photo, suffix: s } }); }}
-                        >{s}</button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-        </>
-      );
+    /* ========================= STEP 2 — RESEARCH ========================= */
+    // Convert a blob: URL back to base64 + media-type for the Anthropic vision API.
+    async function blobUrlToBase64(url) {
+      const resp = await fetch(url);
+      const blob = await resp.blob();
+      return await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const dataUrl = reader.result;
+          const base64 = dataUrl.split(",")[1];
+          const mediaType = (dataUrl.match(/^data:([^;]+);/) || [null, "image/jpeg"])[1];
+          resolve({ base64, mediaType });
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
     }
 
-    /* ========================= STEP 3 — RESEARCH ========================= */
-    function StepResearch({ onContinue, onBack, status, setStatus, garments, setGarments }) {
+    const RESEARCH_PROMPT = `You are analyzing a photo of a clothing item for a Poshmark resale listing.
+
+Use the web_search tool to research the item:
+1) Identify the brand and product name (look for logos, tags, distinctive design features)
+2) Find the original retail price (MSRP) in USD from the brand's website or major retailers
+3) Find a high-resolution stock photo URL from the manufacturer or retailer (direct image URL, not a product page)
+4) Find recent sold comps on Poshmark, Mercari, or eBay in the last 90 days to suggest a fair listing price
+
+If the photo doesn't show enough detail to identify the item with confidence, do your best with what's visible and set the relevant confidence flags to "low".
+
+Then respond with ONLY a valid JSON object — no surrounding prose, no markdown code fences — with these exact keys:
+
+{
+  "brand": "best brand identification, or empty string if unclear",
+  "product": "product name e.g. 'Carpe Diem Shorts'",
+  "title": "Listing title in 'Brand Product' format. Prepend 'NWT ' ONLY if you see a hang tag or 'new with tags' indicator in the photo.",
+  "isNWT": boolean (only true if you see an attached price/hang tag),
+  "msrp": number or null,
+  "recommendedPrice": number or null (based on comp prices),
+  "department": "Women" | "Men" | "Kids" | "Home" | "Electronics" | "Pets",
+  "category": "general category e.g. Dresses, Tops, Shorts, Pants & Jumpsuits, Sweaters, Shoes, Jackets & Coats, Accessories",
+  "subcategory": "finer subcategory or empty",
+  "size": "size from any visible label, or empty",
+  "condition": "NWT" | "Like New" | "Good" | "Fair",
+  "color1": "Red" | "Pink" | "Orange" | "Yellow" | "Green" | "Blue" | "Purple" | "Gold" | "Silver" | "Black" | "Gray" | "White" | "Cream" | "Brown" | "Tan",
+  "color2": one of the above or empty,
+  "stockUrl": "direct URL to a manufacturer/retailer stock photo, or empty if not found",
+  "description": "Poshmark-style listing description, 2-3 short paragraphs, plain text only. Include measurement placeholders like '• Waist: __ in' and end with 5-8 hashtags. Mention the original retail price at the end.",
+  "confidence": {
+    "brand": "high" | "low",
+    "stockUrl": "high" | "low",
+    "msrp": "high" | "low",
+    "price": "high" | "low"
+  }
+}
+
+Output ONLY the JSON object.`;
+
+    async function researchGarment(garment, apiKey, onProgress) {
+      const front = garment.photos.find((p) => p.suffix === "front") || garment.photos[0];
+      if (!front) throw new Error("No photo found on this garment.");
+      if (!front.url) throw new Error("This garment's photo is HEIC and can't be analyzed in-browser. Convert to JPG and re-ingest.");
+
+      onProgress && onProgress("Encoding image…");
+      const { base64, mediaType } = await blobUrlToBase64(front.url);
+
+      onProgress && onProgress("Researching with Claude + web search…");
+      const resp = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true",
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-5",
+          max_tokens: 4096,
+          tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 5 }],
+          messages: [{
+            role: "user",
+            content: [
+              { type: "image", source: { type: "base64", media_type: mediaType, data: base64 } },
+              { type: "text", text: RESEARCH_PROMPT }
+            ]
+          }]
+        })
+      });
+
+      if (!resp.ok) {
+        const errText = await resp.text();
+        throw new Error(`API ${resp.status}: ${errText.slice(0, 280)}`);
+      }
+
+      const data = await resp.json();
+      const text = (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
+
+      // Extract JSON — strip fences, then take the outermost { ... }
+      let jsonText = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+      const start = jsonText.indexOf("{");
+      const end = jsonText.lastIndexOf("}");
+      if (start >= 0 && end > start) jsonText = jsonText.slice(start, end + 1);
+
+      try {
+        return JSON.parse(jsonText);
+      } catch (e) {
+        throw new Error(`Couldn't parse JSON from response. First 200 chars: ${text.slice(0, 200)}`);
+      }
+    }
+
+    function brandInitials(brand) {
+      if (!brand) return "";
+      return brand.split(/\s+/).filter(Boolean).map((w) => w[0].toUpperCase()).join("");
+    }
+
+    function generateSku(brand, allGarments, currentId) {
+      if (!brand) return "";
+      const initials = brandInitials(brand);
+      if (!initials) return "";
+      // Count garments (excluding the current one) already assigned a SKU with these initials
+      const existing = allGarments.filter((g) => g.id !== currentId && g.detected.sku && g.detected.sku.startsWith(initials)).length;
+      return `${initials}${String(existing + 1).padStart(4, "0")}`;
+    }
+
+    function StepResearch({ onContinue, onBack, status, setStatus, garments, setGarments, apiKey, setApiKey }) {
       const [activeId, setActiveId] = useState(garments[0].id);
       const active = garments.find((g) => g.id === activeId);
+      const [researching, setResearching] = useState({}); // { [garmentId]: "status text" }
+      const [errors, setErrors] = useState({}); // { [garmentId]: "error message" }
+      const [apiKeyDraft, setApiKeyDraft] = useState("");
+      const [showApiKeyModal, setShowApiKeyModal] = useState(false);
+      const [pendingAction, setPendingAction] = useState(null); // function to run after key is saved
+      const [bulkRunning, setBulkRunning] = useState(false);
+
+      function ensureApiKey(action) {
+        if (apiKey && apiKey.trim()) { action(); return; }
+        setApiKeyDraft("");
+        setPendingAction(() => action);
+        setShowApiKeyModal(true);
+      }
+
+      function saveApiKey() {
+        const k = (apiKeyDraft || "").trim();
+        if (!k) return;
+        setApiKey(k);
+        setShowApiKeyModal(false);
+        if (pendingAction) {
+          const a = pendingAction;
+          setPendingAction(null);
+          // Defer so the new apiKey state is applied before the action reads it
+          setTimeout(a, 0);
+        }
+      }
+
+      async function doResearch(garmentId, keyOverride) {
+        const useKey = keyOverride || apiKey;
+        if (!useKey) return;
+        const garment = garments.find((g) => g.id === garmentId);
+        if (!garment) return;
+
+        setErrors((prev) => { const n = { ...prev }; delete n[garmentId]; return n; });
+        setResearching((prev) => ({ ...prev, [garmentId]: "Starting…" }));
+
+        try {
+          const result = await researchGarment(garment, useKey, (msg) => {
+            setResearching((prev) => ({ ...prev, [garmentId]: msg }));
+          });
+
+          setGarments((prev) => prev.map((g) => {
+            if (g.id !== garmentId) return g;
+            const brand = (result.brand || "").trim();
+            const sku = brand ? generateSku(brand, prev, g.id) : g.detected.sku;
+            const newDetected = {
+              ...g.detected,
+              brand: brand || g.detected.brand,
+              product: result.product || g.detected.product,
+              title: result.title || g.detected.title,
+              isNWT: !!result.isNWT,
+              msrp: (result.msrp != null && !Number.isNaN(Number(result.msrp))) ? Number(result.msrp) : g.detected.msrp,
+              price: (result.recommendedPrice != null && !Number.isNaN(Number(result.recommendedPrice))) ? Number(result.recommendedPrice) : g.detected.price,
+              stockUrl: result.stockUrl || g.detected.stockUrl,
+              description: result.description || g.detected.description,
+              department: result.department || g.detected.department,
+              category: result.category || g.detected.category,
+              subcategory: result.subcategory || g.detected.subcategory,
+              size: result.size || g.detected.size,
+              condition: result.condition || g.detected.condition,
+              color1: result.color1 || g.detected.color1,
+              color2: result.color2 || g.detected.color2,
+              sku: sku || g.detected.sku,
+            };
+            const conf = result.confidence || {};
+            const newConfidence = {};
+            if (conf.brand === "low" || !brand) newConfidence.brand = "low";
+            if (conf.stockUrl === "low" || !result.stockUrl) newConfidence.stockUrl = "low";
+            if (conf.msrp === "low" || result.msrp == null) newConfidence.msrp = "low";
+            if (conf.price === "low" || result.recommendedPrice == null) newConfidence.price = "low";
+            if (!result.size) newConfidence.size = "low";
+            return { ...g, detected: newDetected, confidence: newConfidence };
+          }));
+
+          setResearching((prev) => { const n = { ...prev }; delete n[garmentId]; return n; });
+        } catch (e) {
+          setErrors((prev) => ({ ...prev, [garmentId]: e.message || String(e) }));
+          setResearching((prev) => { const n = { ...prev }; delete n[garmentId]; return n; });
+        }
+      }
+
+      async function researchAll(keyOverride) {
+        if (bulkRunning) return;
+        setBulkRunning(true);
+        try {
+          for (const g of garments) {
+            if (!g.detected.brand || !g.detected.brand.trim()) {
+              await doResearch(g.id, keyOverride);
+            }
+          }
+        } finally {
+          setBulkRunning(false);
+        }
+      }
 
       function updateDetected(field, value) {
         setGarments((prev) => prev.map((g) => {
           if (g.id !== activeId) return g;
           const nextConf = { ...g.confidence };
           delete nextConf[field];
-          return { ...g, detected: { ...g.detected, [field]: value }, confidence: nextConf };
+          const nextDetected = { ...g.detected, [field]: value };
+          // Regenerate SKU when brand is edited (and the existing SKU was auto-generated)
+          if (field === "brand") {
+            const prevInitials = brandInitials(g.detected.brand);
+            const skuLooksAuto = !g.detected.sku || (prevInitials && g.detected.sku.startsWith(prevInitials));
+            if (skuLooksAuto) {
+              nextDetected.sku = generateSku(value, prev, g.id);
+            }
+          }
+          return { ...g, detected: nextDetected, confidence: nextConf };
         }));
       }
 
       function regenerateDescription() {
-        const ta = document.querySelector('textarea[data-field="description"]');
-        if (ta) {
-          ta.style.transition = "background .2s ease";
-          ta.style.background = "var(--accent-soft)";
-          setTimeout(() => { ta.style.background = ""; }, 500);
-        }
+        ensureApiKey(() => doResearch(activeId));
       }
 
       function fieldClass(name) {
@@ -1529,7 +1426,7 @@
       }
 
       function confirmResearch() {
-        setStatus((s) => ({ ...s, 2: "done" }));
+        setStatus((s) => ({ ...s, 1: "done" }));
         onContinue();
       }
 
@@ -1539,19 +1436,27 @@
       return (
         <>
           <Topbar
-            crumb="Step 3 of 4"
+            crumb="Step 2 of 3"
             title="Research"
             right={
               <>
                 <button className="btn ghost" onClick={onBack}>← Back</button>
                 {lowConfCount > 0 && <span className="pill warn">{Icon.warn} {lowConfCount} fields need review</span>}
+                <button
+                  className="btn accent"
+                  onClick={() => ensureApiKey(() => researchAll(apiKey))}
+                  disabled={bulkRunning || Object.keys(researching).length > 0}
+                  title="Run Claude research on every garment that doesn't have a brand yet"
+                >
+                  {bulkRunning ? <><span className="spin" style={{display:'inline-flex'}}>{Icon.refresh}</span> Researching…</> : <>{Icon.spark} Research all</>}
+                </button>
                 <button className="btn primary" onClick={confirmResearch}>Continue to export {Icon.arrow}</button>
               </>
             }
           />
           <div className="workspace">
             <p className="section-sub">
-              For each garment, Fetch Closet ran a reverse-image search, identified the brand and product, pulled the MSRP, and benchmarked sold listings on Poshmark / Mercari / eBay to suggest a sale price. Review and edit anything before export. Low-confidence fields are highlighted.
+              Fetch Closet uses your Anthropic API key to send each garment's front photo to Claude with the <code style={{fontFamily:"var(--font-mono)"}}>web_search</code> tool enabled — Claude identifies the brand and product, looks up MSRP and sold comps on Poshmark/Mercari/eBay, and writes a Poshmark-style description. Review and edit anything below before export. Low-confidence fields are highlighted yellow.
             </p>
 
             <div className="research-layout">
@@ -1655,6 +1560,32 @@
                   </div>
                 </div>
 
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 24px", borderBottom: "1px solid var(--line)", background: "var(--surface-tint)" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, flex: 1 }}>
+                    {researching[active.id] ? (
+                      <span className="pill" style={{ background: "var(--accent-soft)", color: "var(--accent-2)", borderColor: "transparent" }}>
+                        <span className="spin" style={{ display: "inline-flex" }}>{Icon.refresh}</span>
+                        {researching[active.id]}
+                      </span>
+                    ) : errors[active.id] ? (
+                      <span className="pill err" title={errors[active.id]} style={{ maxWidth: 480, overflow: "hidden", textOverflow: "ellipsis", display: "inline-block", whiteSpace: "nowrap" }}>
+                        {Icon.warn} {errors[active.id]}
+                      </span>
+                    ) : (
+                      <span className="muted" style={{ fontSize: 12 }}>
+                        {active.detected.brand ? <><span className="pill ok">{Icon.check} Researched</span> Edit any field to override.</> : "Research hasn't run on this garment yet."}
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    className="btn sm primary"
+                    onClick={() => ensureApiKey(() => doResearch(active.id, apiKey))}
+                    disabled={!!researching[active.id] || bulkRunning}
+                  >
+                    {Icon.spark} {active.detected.brand ? "Re-research" : "Research this item"}
+                  </button>
+                </div>
+
                 <div className="field-grid">
                   <div className={fieldClass("title")}>
                     <label>Title {active.confidence.title && <span className="pill warn" style={{ padding: "1px 6px", fontSize: 10 }}>low confidence</span>}</label>
@@ -1748,14 +1679,49 @@
               </section>
             </div>
           </div>
+
+          {showApiKeyModal && (
+            <div className="modal-veil" onClick={() => setShowApiKeyModal(false)}>
+              <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 540 }}>
+                <div className="modal-head">
+                  <div>
+                    <div style={{ fontFamily: "var(--font-display)", fontSize: 20 }}>Anthropic API key</div>
+                    <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>Required to research items. Stored in memory only — cleared on page reload.</div>
+                  </div>
+                  <button className="btn icon ghost" onClick={() => setShowApiKeyModal(false)}>{Icon.x}</button>
+                </div>
+                <div className="modal-body" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                  <label className="field" style={{ gap: 6 }}>
+                    <span style={{ fontSize: 11, color: "var(--ink-3)", letterSpacing: "0.07em", textTransform: "uppercase" }}>API key</span>
+                    <input
+                      type="password"
+                      value={apiKeyDraft}
+                      onChange={(e) => setApiKeyDraft(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") saveApiKey(); }}
+                      placeholder="sk-ant-api03-..."
+                      autoFocus
+                      style={{ fontFamily: "var(--font-mono)", fontSize: 12.5, padding: "8px 10px", border: "1px solid var(--line-2)", borderRadius: 6, background: "var(--bg-2)", color: "var(--ink)" }}
+                    />
+                  </label>
+                  <div className="muted" style={{ fontSize: 12, lineHeight: 1.5 }}>
+                    Get a key at <span style={{ fontFamily: "var(--font-mono)" }}>console.anthropic.com</span>. Each research call sends one photo and a few web searches to Claude — typically ~$0.01–$0.05 per item depending on how much searching is needed. The key stays in this browser tab and is not transmitted anywhere except the Anthropic API.
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                    <button className="btn ghost" onClick={() => setShowApiKeyModal(false)}>Cancel</button>
+                    <button className="btn primary" onClick={saveApiKey} disabled={!apiKeyDraft.trim()}>Save & continue</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </>
       );
     }
 
-    /* ========================= STEP 4 — EXPORT ========================= */
+    /* ========================= STEP 3 — EXPORT ========================= */
     function StepExport({ onBack, status, setStatus, garments }) {
       const [tab, setTab] = useState("Listing Details");
-      const [exported, setExported] = useState(status[3] === "done");
+      const [exported, setExported] = useState(status[2] === "done");
       const [toast, setToast] = useState(null);
 
       const visibleCols = COLUMNS;
@@ -1778,7 +1744,7 @@
 
       function exportXlsx() {
         setExported(true);
-        setStatus((s) => ({ ...s, 3: "done" }));
+        setStatus((s) => ({ ...s, 2: "done" }));
         setToast(`Saved ${filename}`);
         setTimeout(() => setToast(null), 2400);
       }
@@ -1795,7 +1761,7 @@
       return (
         <>
           <Topbar
-            crumb="Step 4 of 4"
+            crumb="Step 3 of 3"
             title="Export"
             right={
               <>
@@ -1939,19 +1905,19 @@
     /* ========================= APP SHELL ========================= */
     function App() {
       const [step, setStep] = useState(0);
-      const [status, setStatus] = useState({ 0: "todo", 1: "todo", 2: "todo", 3: "todo" });
+      const [status, setStatus] = useState({ 0: "todo", 1: "todo", 2: "todo" });
       const [garments, setGarments] = useState(INITIAL_GARMENTS);
+      const [apiKey, setApiKey] = useState("");
 
       const go = (n) => setStep(n);
 
       return (
         <div className="app mood-vault density-workhorse photo-silhouette">
-          <Sidebar step={step} setStep={setStep} status={status} garments={garments} />
+          <Sidebar step={step} setStep={setStep} status={status} garments={garments} apiKey={apiKey} setApiKey={setApiKey} />
           <main className="canvas">
             {step === 0 && <StepPhotos onContinue={() => go(1)} status={status} setStatus={setStatus} garments={garments} setGarments={setGarments} />}
-            {step === 1 && <StepGroups onContinue={() => go(2)} onBack={() => go(0)} status={status} setStatus={setStatus} garments={garments} setGarments={setGarments} />}
-            {step === 2 && <StepResearch onContinue={() => go(3)} onBack={() => go(1)} status={status} setStatus={setStatus} garments={garments} setGarments={setGarments} />}
-            {step === 3 && <StepExport onBack={() => go(2)} status={status} setStatus={setStatus} garments={garments} />}
+            {step === 1 && <StepResearch onContinue={() => go(2)} onBack={() => go(0)} status={status} setStatus={setStatus} garments={garments} setGarments={setGarments} apiKey={apiKey} setApiKey={setApiKey} />}
+            {step === 2 && <StepExport onBack={() => go(1)} status={status} setStatus={setStatus} garments={garments} />}
           </main>
         </div>
       );
